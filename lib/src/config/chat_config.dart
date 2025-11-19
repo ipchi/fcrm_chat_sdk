@@ -6,6 +6,9 @@ class ChatConfig {
   /// The base URL of your FCRM backend (e.g., https://api.yourcompany.com)
   final String baseUrl;
 
+  /// The company/tenant token for tenant identification
+  final String companyToken;
+
   /// The Chat App key provided in FCRM dashboard
   final String appKey;
 
@@ -23,6 +26,7 @@ class ChatConfig {
 
   ChatConfig({
     required this.baseUrl,
+    required this.companyToken,
     required this.appKey,
     required this.appSecret,
     this.socketUrl,
@@ -39,12 +43,13 @@ class ChatConfig {
     return digest.toString();
   }
 
-  /// Get the API endpoint URL
-  String get apiUrl => '$baseUrl/api/chat-app';
+  /// Get the API endpoint URL with company token
+  String get apiUrl => '$baseUrl/api/v1/mobile-chat/$companyToken';
 
   /// Copy with new values
   ChatConfig copyWith({
     String? baseUrl,
+    String? companyToken,
     String? appKey,
     String? appSecret,
     String? socketUrl,
@@ -53,6 +58,7 @@ class ChatConfig {
   }) {
     return ChatConfig(
       baseUrl: baseUrl ?? this.baseUrl,
+      companyToken: companyToken ?? this.companyToken,
       appKey: appKey ?? this.appKey,
       appSecret: appSecret ?? this.appSecret,
       socketUrl: socketUrl ?? this.socketUrl,

@@ -26,6 +26,19 @@ class ChatApiService {
     }
   }
 
+  /// Get default headers with signature
+  Map<String, String> _getHeaders({bool isJson = true}) {
+    final headers = <String, String>{
+      'Accept': 'application/json',
+      'X-Chat-Signature': config.generateSignature(),
+      'X-Chat-App-Key': config.appKey,
+    };
+    if (isJson) {
+      headers['Content-Type'] = 'application/json';
+    }
+    return headers;
+  }
+
   /// Get chat app configuration
   Future<ChatAppRemoteConfig> getConfig() async {
     final signature = config.generateSignature();
@@ -64,10 +77,7 @@ class ChatApiService {
 
     final response = await _client.post(
       url,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
+      headers: _getHeaders(),
       body: jsonEncode({
         'chat_app_key': config.appKey,
         'user_data': userData,
@@ -97,10 +107,7 @@ class ChatApiService {
 
     final response = await _client.post(
       url,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
+      headers: _getHeaders(),
       body: jsonEncode({
         'chat_app_key': config.appKey,
         'browser_key': browserKey,
@@ -131,10 +138,7 @@ class ChatApiService {
 
     final response = await _client.post(
       url,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
+      headers: _getHeaders(),
       body: jsonEncode({
         'chat_app_key': config.appKey,
         'browser_key': browserKey,
@@ -164,10 +168,7 @@ class ChatApiService {
 
     final response = await _client.post(
       url,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
+      headers: _getHeaders(),
       body: jsonEncode({
         'chat_app_key': config.appKey,
         'browser_key': browserKey,
@@ -199,6 +200,10 @@ class ChatApiService {
     _log('Uploading image: ${imageFile.path}');
 
     final request = http.MultipartRequest('POST', url);
+
+    // Add signature headers
+    request.headers.addAll(_getHeaders(isJson: false));
+
     request.fields['chat_app_key'] = config.appKey;
     request.fields['browser_key'] = browserKey;
     if (endpoint != null) {

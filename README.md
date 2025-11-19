@@ -44,6 +44,7 @@ import 'package:fcrm_chat_sdk/fcrm_chat_sdk.dart';
 final chat = FcrmChat(
   config: ChatConfig(
     baseUrl: 'https://your-api-domain.com',
+    companyToken: 'your-company-token',  // Tenant/Company token
     appKey: 'your-chat-app-key',
     appSecret: 'your-chat-app-secret',
     enableLogging: true, // Optional: Enable debug logs
@@ -141,6 +142,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _chat = FcrmChat(
       config: ChatConfig(
         baseUrl: 'https://api.yourcompany.com',
+        companyToken: 'your-company-token',
         appKey: 'your-app-key',
         appSecret: 'your-app-secret',
         enableLogging: true,
@@ -319,6 +321,7 @@ class _ChatScreenState extends State<ChatScreen> {
 | Property | Type | Description |
 |----------|------|-------------|
 | `baseUrl` | String | Base URL of your FCRM API |
+| `companyToken` | String | Company/Tenant token for identification |
 | `appKey` | String | Chat App key from FCRM dashboard |
 | `appSecret` | String | Chat App secret from FCRM dashboard |
 | `socketUrl` | String? | Custom socket URL (optional) |
