@@ -21,7 +21,7 @@ Add this to your `pubspec.yaml`:
 dependencies:
   fcrm_chat_sdk:
     git:
-      url: https://github.com/your-org/fcrm_chat_sdk.git
+      url: https://github.com/ipchi/fcrm_chat_sdk.git
       ref: main
 ```
 
@@ -420,5 +420,5 @@ MIT License - see LICENSE file for details.
 ## Support
 
 For issues and feature requests, please visit:
-- GitHub Issues: https://github.com/your-org/fcrm_chat_sdk/issues
+- GitHub Issues: https://github.com/ipchi/fcrm_chat_sdk/issues
 - FCRM Documentation: https://docs.yourcompany.com
