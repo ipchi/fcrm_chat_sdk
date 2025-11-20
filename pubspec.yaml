@@ -1,6 +1,6 @@
 name: fcrm_chat_sdk
 description: Flutter SDK for FCRM Chat Apps - Connect your mobile app to FCRM Chat system with real-time messaging support.
-version: 1.1.1
+version: 1.1.2
 homepage: https://github.com/ipchi/fcrm_chat_sdk
 
 environment:
@@ -10,7 +10,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  http: ^1.1.1
+  http: ^1.1.@
   socket_io_client: ^2.0.3+1
   crypto: ^3.0.3
   shared_preferences: ^2.2.2
