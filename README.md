@@ -52,32 +52,61 @@ final chat = FcrmChat(
 );
 
 // Initialize (fetches config and connects to socket)
-await chat.initialize();
+try {
+  await chat.initialize();
+  print('Chat initialized successfully');
+} catch (e) {
+  print('Failed to initialize chat: $e');
+  // Handle initialization error (show user-friendly message)
+}
 ```
 
 ### 2. Register User
 
 ```dart
 // Register with required user data
-await chat.register(
-  userData: {
-    'name': 'John Doe',
-    'phone': '+1234567890',
-    'email': 'john@example.com',
-  },
-  endpoint: 'Mobile App - Home Screen',
-);
+try {
+  await chat.register(
+    userData: {
+      'name': 'John Doe',
+      'phone': '+1234567890',
+      'email': 'john@example.com',
+    },
+    endpoint: 'Mobile App - Home Screen',
+  );
+  print('User registered successfully');
+} on ChatException catch (e) {
+  print('Registration failed: $e');
+  // Handle missing required fields or validation errors
+} catch (e) {
+  print('Unexpected error during registration: $e');
+}
 ```
 
 ### 3. Send Messages
 
 ```dart
 // Send text message
-final response = await chat.sendMessage('Hello! I need help with my order.');
+try {
+  final response = await chat.sendMessage('Hello! I need help with my order.');
+  print('Message sent: ${response.userMessageId}');
+} on ChatException catch (e) {
+  print('Failed to send message: $e');
+  // Handle not registered or not initialized errors
+} catch (e) {
+  print('Network error: $e');
+  // Handle network errors, show retry option
+}
 
 // Send image
-final imageFile = File('/path/to/image.jpg');
-final result = await chat.sendImage(imageFile);
+try {
+  final imageFile = File('/path/to/image.jpg');
+  final result = await chat.sendImage(imageFile);
+  print('Image sent: ${result['image_url']}');
+} catch (e) {
+  print('Failed to send image: $e');
+  // Handle file or upload errors
+}
 ```
 
 ### 4. Listen for Messages
