@@ -32,7 +32,7 @@ class ChatMessage {
       createdAt: json['created_at'] != null
           ? DateTime.parse(json['created_at'])
           : DateTime.now(),
-      metadata: json['metadata'],
+      metadata: json['metadata'] is Map<String, dynamic> ? json['metadata'] : null,
     );
   }
 
