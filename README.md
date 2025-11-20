@@ -377,6 +377,200 @@ class _ChatScreenState extends State<ChatScreen> {
 4. Copy the **Key** and **Secret** values
 5. Use these in your `ChatConfig`
 
+## Socket Configuration
+
+The SDK uses Socket.IO for real-time communication. Socket configuration is automatically fetched from your FCRM server during initialization, but developers can customize socket behavior.
+
+### How Socket Configuration Works
+
+When you call `chat.initialize()`, the SDK:
+1. Fetches socket configuration from `{baseUrl}/api/chat_app/get_config`
+2. Receives socket URL and other settings from the server
+3. Connects to the socket server with authentication
+4. Joins the private chat room using the browser key
+
+### Socket Connection Details
+
+The SDK establishes a Socket.IO connection with the following configuration:
+
+```dart
+// Socket connection is created with these parameters:
+// - auth: { key: appKey, browser_key: browserKey }
+// - transports: ['websocket', 'polling']
+// - reconnection: true
+// - reconnectionAttempts: 5
+// - reconnectionDelay: 1000ms
+// - timeout: 20000ms (configurable via ChatConfig)
+```
+
+### Authentication
+
+The socket connection uses authentication to identify the client:
+
+| Auth Parameter | Description |
+|----------------|-------------|
+| `key` | Your Chat App key (from ChatConfig.appKey) |
+| `browser_key` | Unique browser/device identifier (auto-generated on registration) |
+
+The `browser_key` is automatically included in socket auth after user registration and is used to:
+- Join the correct private chat room (`private-chat.{browser_key}`)
+- Receive messages specific to this user/device
+- Maintain session across reconnections
+
+### Custom Socket URL (Optional)
+
+If you need to use a custom socket URL instead of the server-provided one:
+
+```dart
+final chat = FcrmChat(
+  config: ChatConfig(
+    baseUrl: 'https://api.yourcompany.com',
+    companyToken: 'your-company-token',
+    appKey: 'your-app-key',
+    appSecret: 'your-app-secret',
+    socketUrl: 'https://custom-socket.yourcompany.com', // Custom socket URL
+    connectionTimeout: 30000, // Optional: increase timeout to 30s
+  ),
+);
+```
+
+### Socket Configuration Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `socketUrl` | String? | null | Custom socket server URL (overrides server config) |
+| `connectionTimeout` | int | 20000 | Socket connection timeout in milliseconds |
+| `transports` | List | ['websocket', 'polling'] | Transport methods (auto-configured) |
+| `reconnection` | bool | true | Enable automatic reconnection (auto-configured) |
+| `reconnectionAttempts` | int | 5 | Max reconnection attempts (auto-configured) |
+| `reconnectionDelay` | int | 1000 | Delay between reconnection attempts in ms (auto-configured) |
+
+### Server-Side Socket Configuration
+
+Developers deploying the FCRM server should configure the socket server endpoint in their backend settings. The SDK will automatically retrieve this configuration via the `/api/chat_app/get_config` endpoint.
+
+Example server response:
+```json
+{
+  "socket_url": "https://socket.yourcompany.com",
+  "chat_app": {
+    "key": "app_key",
+    "name": "Your Chat App"
+  }
+}
+```
+
+### Socket Events Reference
+
+The SDK automatically handles these socket events:
+
+#### Incoming Events (Server → Client)
+
+| Event | Data | Description |
+|-------|------|-------------|
+| `connect` | - | Socket connection established successfully |
+| `disconnect` | `reason` | Socket disconnected (auto-reconnects) |
+| `connect_error` | `error` | Connection failed (triggers retry) |
+| `reconnect` | `attemptNumber` | Successfully reconnected after disconnect |
+| `reconnect_attempt` | `attemptNumber` | Attempting to reconnect |
+| `App\\Events\\Chat\\MessageEvent` | `{ message }` | New message from Laravel broadcast |
+| `typing` | `{ isTyping }` | Agent typing indicator |
+| `auth-error` | `{ message }` | Authentication failed |
+
+#### Outgoing Events (Client → Server)
+
+| Event | Data | Description |
+|-------|------|-------------|
+| `join` | `private-chat.{browser_key}` | Join private chat room |
+| `typing` | `{ browser_key, isTyping }` | Send typing indicator |
+
+### Connection Management
+
+```dart
+// Listen for connection status
+chat.onConnectionChange.listen((connected) {
+  if (connected) {
+    print('Socket connected');
+  } else {
+    print('Socket disconnected');
+  }
+});
+
+// Manual reconnection
+await chat.reconnect();
+
+// Disconnect
+chat.disconnect();
+```
+
+### Socket Connection Lifecycle
+
+1. **Initialize**: `chat.initialize()` fetches config from server
+2. **Connect**: Socket establishes connection with auth (`key` + `browser_key`)
+3. **Join Room**: Automatically joins `private-chat.{browser_key}` room
+4. **Active**: Real-time message exchange via Laravel broadcast events
+5. **Disconnect**: Auto-reconnect (up to 5 attempts with 1s delay)
+6. **Reconnect**: On successful reconnect, automatically rejoins chat room
+7. **Disposed**: `chat.dispose()` permanently closes connection
+
+**Important Notes:**
+- The `browser_key` is updated in socket auth during reconnection attempts
+- Chat room is automatically rejoined after successful reconnection
+- All messages are received via `App\\Events\\Chat\\MessageEvent` broadcast
+- Private chat room ensures messages are only delivered to the correct user/device
+
+### Chat Room Mechanics
+
+The SDK uses private chat rooms to ensure secure, isolated communication:
+
+```dart
+// After registration or browser update, the SDK automatically:
+// 1. Receives a unique browser_key from the server
+// 2. Includes browser_key in socket authentication
+// 3. Joins the private room: 'private-chat.{browser_key}'
+// 4. Receives messages via Laravel broadcast to this specific room
+```
+
+**Room Lifecycle:**
+- **On Connect**: Joins `private-chat.{browser_key}` if browser_key exists
+- **On Reconnect**: Automatically rejoins the same room
+- **On Registration**: Receives browser_key, then joins room
+- **On Update**: Updates browser data, rejoins room if needed
+
+**Message Flow:**
+1. User sends message via REST API (`/api/chat_app/browser/send-message`)
+2. Server processes message and stores in database
+3. Server broadcasts `App\\Events\\Chat\\MessageEvent` to the private room
+4. SDK receives broadcast event via Socket.IO
+5. SDK emits message via `onMessage` stream
+6. Your app displays the message in UI
+
+### Debugging Socket Connection
+
+Enable logging to debug socket issues:
+
+```dart
+final chat = FcrmChat(
+  config: ChatConfig(
+    baseUrl: 'https://api.yourcompany.com',
+    companyToken: 'your-company-token',
+    appKey: 'your-app-key',
+    appSecret: 'your-app-secret',
+    enableLogging: true, // Enable debug logs
+  ),
+);
+```
+
+This will output socket connection events, errors, and message flow to the console.
+
+**Debug Checklist:**
+- ✅ Verify socket URL is returned from `/api/chat_app/get_config`
+- ✅ Confirm `browser_key` is stored in local storage after registration
+- ✅ Check socket auth includes both `key` and `browser_key`
+- ✅ Ensure private room name matches: `private-chat.{browser_key}`
+- ✅ Verify Laravel broadcast is configured and running
+- ✅ Check that messages are broadcast to the correct room
+
 ## Requirements
 
 - Flutter 3.0+
