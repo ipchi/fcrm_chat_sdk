@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2025-11-20
+
+### Added
+- **Pagination support** for `loadMessages()` and `getMessages()` methods
+- **`PaginatedMessages` model** with metadata (total, currentPage, perPage, lastPage, hasMore)
+- **Infinite scrolling example** in documentation
+- **Logging control** for storage service operations
+- Detailed pagination documentation with examples
+
+### Changed
+- 🚨 **BREAKING**: `loadMessages()` now returns `PaginatedMessages` instead of `List<ChatMessage>`
+- 🚨 **BREAKING**: `getMessages()` now returns `PaginatedMessages` instead of `List<ChatMessage>`
+- Both methods now accept `page` and `perPage` parameters (default: page=1, perPage=20)
+- Updated all documentation examples to use pagination
+
+### Fixed
+- **Duplicate socket messages** - Fixed listener cleanup preventing duplicate message reception
+- **Metadata parsing error** - Fixed handling of empty array `[]` from backend
+- **Date filter issue** - Removed 2-day restriction on message history in backend
+- Socket connection properly disposes old connections before creating new ones
+
+### Backend Changes
+- Updated `ChatService::getMessages()` to support pagination with skip/take
+- Updated `MobileChatAppController::getMessages()` to accept page and per_page parameters
+- Updated `ChatAppWidgetController::getMessages()` to support pagination
+- Backend now returns pagination metadata in response
+
 ## [1.1.0] - 2025-11-20
 
 ### Added

@@ -234,24 +234,40 @@ class FcrmChat {
     );
   }
 
-  /// Get chat message history
-  Future<List<ChatMessage>> getMessages() async {
+  /// Get chat message history with pagination
+  ///
+  /// [page] - Page number (default: 1)
+  /// [perPage] - Number of messages per page (default: 20)
+  Future<PaginatedMessages> getMessages({
+    int page = 1,
+    int perPage = 20,
+  }) async {
     _ensureInitialized();
     _ensureBrowserKey();
 
-    return await _apiService.getMessages(browserKey: _browserKey!);
+    return await _apiService.getMessages(
+      browserKey: _browserKey!,
+      page: page,
+      perPage: perPage,
+    );
   }
 
-  /// Load chat messages for history/regeneration
+  /// Load chat messages for history/regeneration with pagination
   ///
   /// This is useful when you want to load chat history when app starts
   /// or when regenerating the chat page. It will:
   /// 1. Check if user is registered
   /// 2. Update browser session with stored user data
-  /// 3. Return message history
+  /// 3. Return paginated message history
   ///
-  /// Returns empty list if user is not registered
-  Future<List<ChatMessage>> loadMessages() async {
+  /// [page] - Page number (default: 1)
+  /// [perPage] - Number of messages per page (default: 20)
+  ///
+  /// Returns empty PaginatedMessages if user is not registered
+  Future<PaginatedMessages> loadMessages({
+    int page = 1,
+    int perPage = 20,
+  }) async {
     _ensureInitialized();
 
     // Check if browser key exists
@@ -262,27 +278,42 @@ class FcrmChat {
 
     // If still no browser key, user is not registered
     if (_browserKey == null) {
-      return [];
+      return PaginatedMessages(
+        messages: [],
+        total: 0,
+        currentPage: 1,
+        perPage: perPage,
+        lastPage: 1,
+        hasMore: false,
+      );
     }
 
     // Get stored user data
     final userData = await _storageService.getUserData();
     if (userData == null) {
-      return [];
+      return PaginatedMessages(
+        messages: [],
+        total: 0,
+        currentPage: 1,
+        perPage: perPage,
+        lastPage: 1,
+        hasMore: false,
+      );
     }
 
     try {
-      // Update browser session to get latest messages
-      final messages = await updateBrowser(userData: userData);
-      return messages;
+      // Try to get messages directly with pagination
+      return await getMessages(page: page, perPage: perPage);
     } catch (e) {
-      // If update fails, try to get messages directly
-      try {
-        return await getMessages();
-      } catch (e2) {
-        // If both fail, return empty list
-        return [];
-      }
+      // If fails, return empty paginated response
+      return PaginatedMessages(
+        messages: [],
+        total: 0,
+        currentPage: 1,
+        perPage: perPage,
+        lastPage: 1,
+        hasMore: false,
+      );
     }
   }
 

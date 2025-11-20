@@ -9,9 +9,10 @@ A Flutter SDK for integrating FCRM Chat Apps into your mobile applications. This
 - User registration with custom fields
 - Image upload support
 - Typing indicators
-- Message history
+- **Paginated message history** with infinite scrolling support
 - Local storage for browser key and user data
 - Connection state management
+- Configurable logging for debugging
 
 ## Installation
 
@@ -149,33 +150,137 @@ if (isRegistered) {
 }
 ```
 
-### 6. Load Chat History
+### 6. Load Chat History with Pagination
 
 ```dart
 // Load chat history when app starts or when regenerating chat page
 // This automatically:
 // 1. Checks if user is registered
 // 2. Updates browser session
-// 3. Returns message history
-final messages = await chat.loadMessages();
+// 3. Returns paginated message history
 
-if (messages.isEmpty) {
+// Load first page (default: 20 messages per page)
+final result = await chat.loadMessages();
+
+if (result.messages.isEmpty) {
   print('No messages or user not registered');
 } else {
-  print('Loaded ${messages.length} messages');
-  for (final message in messages) {
+  print('Loaded ${result.messages.length} of ${result.total} messages');
+  print('Page ${result.currentPage} of ${result.lastPage}');
+
+  for (final message in result.messages) {
     print('${message.senderName}: ${message.content}');
+  }
+
+  // Check if more messages available
+  if (result.hasMore) {
+    print('More messages available. Load page ${result.currentPage + 1}');
+  }
+}
+
+// Load specific page with custom page size
+final page2 = await chat.loadMessages(page: 2, perPage: 50);
+print('Loaded page 2 with ${page2.messages.length} messages');
+```
+
+### 7. Implement Infinite Scrolling
+
+```dart
+class ChatScreen extends StatefulWidget {
+  @override
+  _ChatScreenState createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> {
+  final List<ChatMessage> _messages = [];
+  final ScrollController _scrollController = ScrollController();
+  int _currentPage = 1;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInitialMessages();
+    _scrollController.addListener(_onScroll);
+  }
+
+  Future<void> _loadInitialMessages() async {
+    final result = await chat.loadMessages(page: 1, perPage: 20);
+    setState(() {
+      _messages.addAll(result.messages);
+      _hasMore = result.hasMore;
+      _currentPage = result.currentPage;
+    });
+  }
+
+  Future<void> _loadMoreMessages() async {
+    if (_isLoadingMore || !_hasMore) return;
+
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    try {
+      final result = await chat.loadMessages(
+        page: _currentPage + 1,
+        perPage: 20,
+      );
+
+      setState(() {
+        _messages.addAll(result.messages);
+        _hasMore = result.hasMore;
+        _currentPage = result.currentPage;
+      });
+    } finally {
+      setState(() {
+        _isLoadingMore = false;
+      });
+    }
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels == 0) {
+      // User scrolled to top, load older messages
+      _loadMoreMessages();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      controller: _scrollController,
+      reverse: true,
+      itemCount: _messages.length + (_isLoadingMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index == _messages.length) {
+          return Center(child: CircularProgressIndicator());
+        }
+        return MessageWidget(message: _messages[index]);
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 }
 ```
 
-### 7. Get Message History
+### 8. Get Message History (Alternative Method)
 
 ```dart
-// Fetch previous messages (requires registered user)
+// Fetch previous messages with pagination (requires registered user)
 try {
-  final messages = await chat.getMessages();
-  for (final message in messages) {
+  final result = await chat.getMessages(page: 1, perPage: 30);
+
+  print('Total messages: ${result.total}');
+  print('Current page: ${result.currentPage}/${result.lastPage}');
+  print('Has more: ${result.hasMore}');
+
+  for (final message in result.messages) {
     print('${message.senderName}: ${message.content}');
   }
 } on ChatException catch (e) {
@@ -245,10 +350,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
       // Check if already registered and load messages
       if (await _chat.isRegistered()) {
-        // Load chat history using the new loadMessages() method
-        final history = await _chat.loadMessages();
+        // Load chat history using loadMessages() with pagination
+        final result = await _chat.loadMessages(page: 1, perPage: 20);
         setState(() {
-          _messages.addAll(history);
+          _messages.addAll(result.messages);
         });
       } else {
         // Show registration prompt if needed
@@ -443,9 +548,9 @@ class _ChatPageState extends State<ChatPage> {
 
       // 5. Load chat history if registered
       if (isRegistered) {
-        final messages = await _chat.loadMessages();
+        final result = await _chat.loadMessages(page: 1, perPage: 20);
         setState(() {
-          _messages = messages;
+          _messages = result.messages;
         });
       }
     } catch (e) {
@@ -468,11 +573,11 @@ class _ChatPageState extends State<ChatPage> {
       );
 
       // After registration, load messages
-      final messages = await _chat.loadMessages();
+      final result = await _chat.loadMessages(page: 1, perPage: 20);
 
       setState(() {
         _isRegistered = true;
-        _messages = messages;
+        _messages = result.messages;
       });
     } catch (e) {
       print('Registration error: $e');
@@ -552,11 +657,11 @@ await chat.reset(); // Clears all stored data and disconnects
 | `initialize()` | Initialize SDK and connect to socket |
 | `isRegistered()` | ✨ **Check if user is registered** (returns bool) |
 | `register(userData, endpoint)` | Register new user/device |
-| `loadMessages()` | ✨ **Load chat history** (auto-checks registration, updates session, returns messages) |
+| `loadMessages({page, perPage})` | ✨ **Load chat history with pagination** (auto-checks registration, updates session, returns paginated messages) |
 | `updateBrowser(userData)` | Update user info and get history |
 | `sendMessage(message, endpoint)` | Send text message |
 | `sendImage(file, endpoint)` | Upload and send image |
-| `getMessages()` | Get message history (requires registration) |
+| `getMessages({page, perPage})` | Get paginated message history (requires registration) |
 | `sendTyping(isTyping)` | Send typing indicator |
 | `getUserData()` | Get stored user data |
 | `reset()` | Clear all data and disconnect |
@@ -572,6 +677,17 @@ await chat.reset(); // Clears all stored data and disconnects
 | `onConnectionChange` | `Stream<bool>` | Connection status |
 | `onTyping` | `Stream<bool>` | Typing indicator |
 | `onReady` | `Stream<bool>` | SDK ready state |
+
+### PaginatedMessages Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `messages` | List\<ChatMessage\> | List of messages for current page |
+| `total` | int | Total number of messages across all pages |
+| `currentPage` | int | Current page number (1-indexed) |
+| `perPage` | int | Number of messages per page |
+| `lastPage` | int | Last page number |
+| `hasMore` | bool | Whether more pages are available |
 
 ### ChatMessage Properties
 

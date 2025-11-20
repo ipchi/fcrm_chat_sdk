@@ -8,6 +8,7 @@ import '../config/chat_config.dart';
 import '../models/chat_app_config.dart';
 import '../models/browser.dart';
 import '../models/message.dart';
+import '../models/paginated_messages.dart';
 
 /// API service for FCRM Chat
 class ChatApiService {
@@ -158,13 +159,15 @@ class ChatApiService {
     }
   }
 
-  /// Get chat messages
-  Future<List<ChatMessage>> getMessages({
+  /// Get chat messages with pagination
+  Future<PaginatedMessages> getMessages({
     required String browserKey,
+    int page = 1,
+    int perPage = 20,
   }) async {
     final url = Uri.parse('${config.apiUrl}/messages');
 
-    _log('Getting messages');
+    _log('Getting messages (page: $page, perPage: $perPage)');
 
     final response = await _client.post(
       url,
@@ -172,16 +175,16 @@ class ChatApiService {
       body: jsonEncode({
         'chat_app_key': config.appKey,
         'browser_key': browserKey,
+        'page': page,
+        'per_page': perPage,
       }),
     ).timeout(Duration(milliseconds: config.connectionTimeout));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      final messages = (data['messages'] as List? ?? [])
-          .map((m) => ChatMessage.fromJson(m))
-          .toList();
-      _log('Received ${messages.length} messages');
-      return messages;
+      final paginatedMessages = PaginatedMessages.fromJson(data);
+      _log('Received ${paginatedMessages.messages.length} messages (page ${paginatedMessages.currentPage}/${paginatedMessages.lastPage})');
+      return paginatedMessages;
     } else {
       final error = _parseError(response);
       _log('Messages error: $error');
