@@ -242,6 +242,50 @@ class FcrmChat {
     return await _apiService.getMessages(browserKey: _browserKey!);
   }
 
+  /// Load chat messages for history/regeneration
+  ///
+  /// This is useful when you want to load chat history when app starts
+  /// or when regenerating the chat page. It will:
+  /// 1. Check if user is registered
+  /// 2. Update browser session with stored user data
+  /// 3. Return message history
+  ///
+  /// Returns empty list if user is not registered
+  Future<List<ChatMessage>> loadMessages() async {
+    _ensureInitialized();
+
+    // Check if browser key exists
+    if (_browserKey == null) {
+      // Try to load from storage
+      _browserKey = await _storageService.getBrowserKey();
+    }
+
+    // If still no browser key, user is not registered
+    if (_browserKey == null) {
+      return [];
+    }
+
+    // Get stored user data
+    final userData = await _storageService.getUserData();
+    if (userData == null) {
+      return [];
+    }
+
+    try {
+      // Update browser session to get latest messages
+      final messages = await updateBrowser(userData: userData);
+      return messages;
+    } catch (e) {
+      // If update fails, try to get messages directly
+      try {
+        return await getMessages();
+      } catch (e2) {
+        // If both fail, return empty list
+        return [];
+      }
+    }
+  }
+
   /// Send typing indicator
   void sendTyping(bool isTyping) {
     if (_browserKey != null) {

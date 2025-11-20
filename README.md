@@ -132,13 +132,55 @@ chat.onTyping.listen((isTyping) {
 });
 ```
 
-### 5. Get Message History
+### 5. Check Registration Status
 
 ```dart
-// Fetch previous messages
-final messages = await chat.getMessages();
-for (final message in messages) {
-  print('${message.senderName}: ${message.content}');
+// Check if user is already registered
+final isRegistered = await chat.isRegistered();
+
+if (isRegistered) {
+  print('User is already registered');
+  // Load chat history
+  final messages = await chat.loadMessages();
+  print('Loaded ${messages.length} messages');
+} else {
+  print('User needs to register');
+  // Show registration form
+}
+```
+
+### 6. Load Chat History
+
+```dart
+// Load chat history when app starts or when regenerating chat page
+// This automatically:
+// 1. Checks if user is registered
+// 2. Updates browser session
+// 3. Returns message history
+final messages = await chat.loadMessages();
+
+if (messages.isEmpty) {
+  print('No messages or user not registered');
+} else {
+  print('Loaded ${messages.length} messages');
+  for (final message in messages) {
+    print('${message.senderName}: ${message.content}');
+  }
+}
+```
+
+### 7. Get Message History
+
+```dart
+// Fetch previous messages (requires registered user)
+try {
+  final messages = await chat.getMessages();
+  for (final message in messages) {
+    print('${message.senderName}: ${message.content}');
+  }
+} on ChatException catch (e) {
+  print('Error: $e');
+  // Handle not registered error
 }
 ```
 
@@ -201,13 +243,16 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await _chat.initialize();
 
-      // Check if already registered
+      // Check if already registered and load messages
       if (await _chat.isRegistered()) {
-        final userData = await _chat.getUserData();
-        final history = await _chat.updateBrowser(userData: userData!);
+        // Load chat history using the new loadMessages() method
+        final history = await _chat.loadMessages();
         setState(() {
           _messages.addAll(history);
         });
+      } else {
+        // Show registration prompt if needed
+        // _showRegistrationDialog();
       }
     } catch (e) {
       print('Init error: $e');
@@ -343,6 +388,149 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 ```
 
+## Recommended Usage Pattern
+
+### Handling Registration and Chat History
+
+Here's the recommended flow for handling user registration and loading chat history:
+
+```dart
+class ChatPage extends StatefulWidget {
+  @override
+  _ChatPageState createState() => _ChatPageState();
+}
+
+class _ChatPageState extends State<ChatPage> {
+  late FcrmChat _chat;
+  List<ChatMessage> _messages = [];
+  bool _isRegistered = false;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeChat();
+  }
+
+  Future<void> _initializeChat() async {
+    // 1. Create chat instance
+    _chat = FcrmChat(
+      config: ChatConfig(
+        baseUrl: 'https://api.yourcompany.com',
+        companyToken: 'your-company-token',
+        appKey: 'your-app-key',
+        appSecret: 'your-app-secret',
+      ),
+    );
+
+    // 2. Setup message listener
+    _chat.onMessage.listen((message) {
+      setState(() {
+        _messages.add(message);
+      });
+    });
+
+    try {
+      // 3. Initialize SDK
+      await _chat.initialize();
+
+      // 4. Check registration status
+      final isRegistered = await _chat.isRegistered();
+
+      setState(() {
+        _isRegistered = isRegistered;
+      });
+
+      // 5. Load chat history if registered
+      if (isRegistered) {
+        final messages = await _chat.loadMessages();
+        setState(() {
+          _messages = messages;
+        });
+      }
+    } catch (e) {
+      print('Error initializing chat: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _register() async {
+    try {
+      await _chat.register(
+        userData: {
+          'name': 'John Doe',
+          'phone': '+1234567890',
+          'email': 'john@example.com',
+        },
+      );
+
+      // After registration, load messages
+      final messages = await _chat.loadMessages();
+
+      setState(() {
+        _isRegistered = true;
+        _messages = messages;
+      });
+    } catch (e) {
+      print('Registration error: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Center(child: CircularProgressIndicator());
+    }
+
+    if (!_isRegistered) {
+      return Center(
+        child: ElevatedButton(
+          onPressed: _register,
+          child: Text('Start Chat'),
+        ),
+      );
+    }
+
+    // Show chat interface
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            itemCount: _messages.length,
+            itemBuilder: (context, index) {
+              return MessageWidget(message: _messages[index]);
+            },
+          ),
+        ),
+        // Message input field
+      ],
+    );
+  }
+}
+```
+
+## Storage Details
+
+### Browser Key Storage
+
+The browser key is **automatically saved to device storage** using `SharedPreferences` when you call `register()`. This allows:
+
+- **Persistent sessions**: User stays registered even after app restart
+- **Automatic reconnection**: SDK automatically reconnects with saved credentials
+- **Message history**: Access to previous conversations
+
+**Storage Keys:**
+- Browser Key: `fcrm_chat_browser_{appKey}`
+- User Data: `fcrm_chat_user_{appKey}`
+
+**To clear storage:**
+```dart
+await chat.reset(); // Clears all stored data and disconnects
+```
+
 ## API Reference
 
 ### ChatConfig
@@ -362,13 +550,14 @@ class _ChatScreenState extends State<ChatScreen> {
 | Method | Description |
 |--------|-------------|
 | `initialize()` | Initialize SDK and connect to socket |
+| `isRegistered()` | ✨ **Check if user is registered** (returns bool) |
 | `register(userData, endpoint)` | Register new user/device |
+| `loadMessages()` | ✨ **Load chat history** (auto-checks registration, updates session, returns messages) |
 | `updateBrowser(userData)` | Update user info and get history |
 | `sendMessage(message, endpoint)` | Send text message |
 | `sendImage(file, endpoint)` | Upload and send image |
-| `getMessages()` | Get message history |
+| `getMessages()` | Get message history (requires registration) |
 | `sendTyping(isTyping)` | Send typing indicator |
-| `isRegistered()` | Check if user is registered |
 | `getUserData()` | Get stored user data |
 | `reset()` | Clear all data and disconnect |
 | `disconnect()` | Disconnect socket |
