@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.2] - 2025-11-20
+
+### Fixed
+- Missing import for `PaginatedMessages` in `fcrm_chat.dart`
+
+### Changed
+- Updated dependencies to latest stable versions:
+  - `http: ^1.2.0` (from ^1.1.2)
+  - `shared_preferences: ^2.3.0` (from ^2.2.2)
+  - `image_picker: ^1.0.7` (from ^1.0.4)
+  - `path: ^1.9.0` (from ^1.8.3)
+  - `mime: ^1.0.5` (from ^1.0.4)
+
+## [1.2.1] - 2025-11-20
+
+### Fixed
+- Added missing `PaginatedMessages` import
+
 ## [1.2.0] - 2025-11-20
 
 ### Added
