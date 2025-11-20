@@ -5,6 +5,7 @@ import 'config/chat_config.dart';
 import 'models/chat_app_config.dart';
 import 'models/browser.dart';
 import 'models/message.dart';
+import 'models/paginated_messages.dart';
 import 'services/chat_api_service.dart';
 import 'services/chat_socket_service.dart';
 import 'services/chat_storage_service.dart';
