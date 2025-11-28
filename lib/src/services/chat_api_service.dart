@@ -7,7 +7,6 @@ import 'package:path/path.dart' as path;
 import '../config/chat_config.dart';
 import '../models/chat_app_config.dart';
 import '../models/browser.dart';
-import '../models/message.dart';
 import '../models/paginated_messages.dart';
 
 /// Callback for tracking upload progress
