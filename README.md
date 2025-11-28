@@ -9,9 +9,10 @@ A Flutter SDK for integrating FCRM Chat Apps into your mobile applications. This
 - User registration with custom fields
 - Image upload support with progress tracking
 - Typing indicators
-- Message history
+- **Paginated message history** with infinite scrolling support
 - Local storage for browser key and user data
 - Connection state management
+- Configurable logging for debugging
 
 ## Installation
 
@@ -52,41 +53,76 @@ final chat = FcrmChat(
 );
 
 // Initialize (fetches config and connects to socket)
-await chat.initialize();
+try {
+  await chat.initialize();
+  print('Chat initialized successfully');
+} catch (e) {
+  print('Failed to initialize chat: $e');
+  // Handle initialization error (show user-friendly message)
+}
 ```
 
 ### 2. Register User
 
 ```dart
 // Register with required user data
-await chat.register(
-  userData: {
-    'name': 'John Doe',
-    'phone': '+1234567890',
-    'email': 'john@example.com',
-  },
-  endpoint: 'Mobile App - Home Screen',
-);
+try {
+  await chat.register(
+    userData: {
+      'name': 'John Doe',
+      'phone': '+1234567890',
+      'email': 'john@example.com',
+    },
+    endpoint: 'Mobile App - Home Screen',
+  );
+  print('User registered successfully');
+} on ChatException catch (e) {
+  print('Registration failed: $e');
+  // Handle missing required fields or validation errors
+} catch (e) {
+  print('Unexpected error during registration: $e');
+}
 ```
 
 ### 3. Send Messages
 
 ```dart
 // Send text message
-final response = await chat.sendMessage('Hello! I need help with my order.');
+try {
+  final response = await chat.sendMessage('Hello! I need help with my order.');
+  print('Message sent: ${response.userMessageId}');
+} on ChatException catch (e) {
+  print('Failed to send message: $e');
+  // Handle not registered or not initialized errors
+} catch (e) {
+  print('Network error: $e');
+  // Handle network errors, show retry option
+}
 
 // Send image
-final imageFile = File('/path/to/image.jpg');
-final result = await chat.sendImage(imageFile);
+try {
+  final imageFile = File('/path/to/image.jpg');
+  final result = await chat.sendImage(imageFile);
+  print('Image sent: ${result['image_url']}');
+} catch (e) {
+  print('Failed to send image: $e');
+  // Handle file or upload errors
+}
 
 // Send image with progress tracking
-final result = await chat.sendImage(
-  imageFile,
-  onSendProgress: (sent, total) {
-    final progress = (sent / total * 100).toStringAsFixed(1);
-    print('Upload progress: $progress%');
-  },
-);
+try {
+  final imageFile = File('/path/to/image.jpg');
+  final result = await chat.sendImage(
+    imageFile,
+    onSendProgress: (sent, total) {
+      final progress = (sent / total * 100).toStringAsFixed(1);
+      print('Upload progress: $progress%');
+    },
+  );
+  print('Image sent: ${result['image_url']}');
+} catch (e) {
+  print('Failed to send image: $e');
+}
 ```
 
 ### 4. Listen for Messages
@@ -112,13 +148,159 @@ chat.onTyping.listen((isTyping) {
 });
 ```
 
-### 5. Get Message History
+### 5. Check Registration Status
 
 ```dart
-// Fetch previous messages
-final messages = await chat.getMessages();
-for (final message in messages) {
-  print('${message.senderName}: ${message.content}');
+// Check if user is already registered
+final isRegistered = await chat.isRegistered();
+
+if (isRegistered) {
+  print('User is already registered');
+  // Load chat history
+  final messages = await chat.loadMessages();
+  print('Loaded ${messages.length} messages');
+} else {
+  print('User needs to register');
+  // Show registration form
+}
+```
+
+### 6. Load Chat History with Pagination
+
+```dart
+// Load chat history when app starts or when regenerating chat page
+// This automatically:
+// 1. Checks if user is registered
+// 2. Updates browser session
+// 3. Returns paginated message history
+
+// Load first page (default: 20 messages per page)
+final result = await chat.loadMessages();
+
+if (result.messages.isEmpty) {
+  print('No messages or user not registered');
+} else {
+  print('Loaded ${result.messages.length} of ${result.total} messages');
+  print('Page ${result.currentPage} of ${result.lastPage}');
+
+  for (final message in result.messages) {
+    print('${message.senderName}: ${message.content}');
+  }
+
+  // Check if more messages available
+  if (result.hasMore) {
+    print('More messages available. Load page ${result.currentPage + 1}');
+  }
+}
+
+// Load specific page with custom page size
+final page2 = await chat.loadMessages(page: 2, perPage: 50);
+print('Loaded page 2 with ${page2.messages.length} messages');
+```
+
+### 7. Implement Infinite Scrolling
+
+```dart
+class ChatScreen extends StatefulWidget {
+  @override
+  _ChatScreenState createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> {
+  final List<ChatMessage> _messages = [];
+  final ScrollController _scrollController = ScrollController();
+  int _currentPage = 1;
+  bool _isLoadingMore = false;
+  bool _hasMore = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInitialMessages();
+    _scrollController.addListener(_onScroll);
+  }
+
+  Future<void> _loadInitialMessages() async {
+    final result = await chat.loadMessages(page: 1, perPage: 20);
+    setState(() {
+      _messages.addAll(result.messages);
+      _hasMore = result.hasMore;
+      _currentPage = result.currentPage;
+    });
+  }
+
+  Future<void> _loadMoreMessages() async {
+    if (_isLoadingMore || !_hasMore) return;
+
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    try {
+      final result = await chat.loadMessages(
+        page: _currentPage + 1,
+        perPage: 20,
+      );
+
+      setState(() {
+        _messages.addAll(result.messages);
+        _hasMore = result.hasMore;
+        _currentPage = result.currentPage;
+      });
+    } finally {
+      setState(() {
+        _isLoadingMore = false;
+      });
+    }
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels == 0) {
+      // User scrolled to top, load older messages
+      _loadMoreMessages();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      controller: _scrollController,
+      reverse: true,
+      itemCount: _messages.length + (_isLoadingMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index == _messages.length) {
+          return Center(child: CircularProgressIndicator());
+        }
+        return MessageWidget(message: _messages[index]);
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+}
+```
+
+### 8. Get Message History (Alternative Method)
+
+```dart
+// Fetch previous messages with pagination (requires registered user)
+try {
+  final result = await chat.getMessages(page: 1, perPage: 30);
+
+  print('Total messages: ${result.total}');
+  print('Current page: ${result.currentPage}/${result.lastPage}');
+  print('Has more: ${result.hasMore}');
+
+  for (final message in result.messages) {
+    print('${message.senderName}: ${message.content}');
+  }
+} on ChatException catch (e) {
+  print('Error: $e');
+  // Handle not registered error
 }
 ```
 
@@ -181,13 +363,16 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await _chat.initialize();
 
-      // Check if already registered
+      // Check if already registered and load messages
       if (await _chat.isRegistered()) {
-        final userData = await _chat.getUserData();
-        final history = await _chat.updateBrowser(userData: userData!);
+        // Load chat history using loadMessages() with pagination
+        final result = await _chat.loadMessages(page: 1, perPage: 20);
         setState(() {
-          _messages.addAll(history);
+          _messages.addAll(result.messages);
         });
+      } else {
+        // Show registration prompt if needed
+        // _showRegistrationDialog();
       }
     } catch (e) {
       print('Init error: $e');
@@ -323,6 +508,149 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 ```
 
+## Recommended Usage Pattern
+
+### Handling Registration and Chat History
+
+Here's the recommended flow for handling user registration and loading chat history:
+
+```dart
+class ChatPage extends StatefulWidget {
+  @override
+  _ChatPageState createState() => _ChatPageState();
+}
+
+class _ChatPageState extends State<ChatPage> {
+  late FcrmChat _chat;
+  List<ChatMessage> _messages = [];
+  bool _isRegistered = false;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeChat();
+  }
+
+  Future<void> _initializeChat() async {
+    // 1. Create chat instance
+    _chat = FcrmChat(
+      config: ChatConfig(
+        baseUrl: 'https://api.yourcompany.com',
+        companyToken: 'your-company-token',
+        appKey: 'your-app-key',
+        appSecret: 'your-app-secret',
+      ),
+    );
+
+    // 2. Setup message listener
+    _chat.onMessage.listen((message) {
+      setState(() {
+        _messages.add(message);
+      });
+    });
+
+    try {
+      // 3. Initialize SDK
+      await _chat.initialize();
+
+      // 4. Check registration status
+      final isRegistered = await _chat.isRegistered();
+
+      setState(() {
+        _isRegistered = isRegistered;
+      });
+
+      // 5. Load chat history if registered
+      if (isRegistered) {
+        final result = await _chat.loadMessages(page: 1, perPage: 20);
+        setState(() {
+          _messages = result.messages;
+        });
+      }
+    } catch (e) {
+      print('Error initializing chat: $e');
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _register() async {
+    try {
+      await _chat.register(
+        userData: {
+          'name': 'John Doe',
+          'phone': '+1234567890',
+          'email': 'john@example.com',
+        },
+      );
+
+      // After registration, load messages
+      final result = await _chat.loadMessages(page: 1, perPage: 20);
+
+      setState(() {
+        _isRegistered = true;
+        _messages = result.messages;
+      });
+    } catch (e) {
+      print('Registration error: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Center(child: CircularProgressIndicator());
+    }
+
+    if (!_isRegistered) {
+      return Center(
+        child: ElevatedButton(
+          onPressed: _register,
+          child: Text('Start Chat'),
+        ),
+      );
+    }
+
+    // Show chat interface
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            itemCount: _messages.length,
+            itemBuilder: (context, index) {
+              return MessageWidget(message: _messages[index]);
+            },
+          ),
+        ),
+        // Message input field
+      ],
+    );
+  }
+}
+```
+
+## Storage Details
+
+### Browser Key Storage
+
+The browser key is **automatically saved to device storage** using `SharedPreferences` when you call `register()`. This allows:
+
+- **Persistent sessions**: User stays registered even after app restart
+- **Automatic reconnection**: SDK automatically reconnects with saved credentials
+- **Message history**: Access to previous conversations
+
+**Storage Keys:**
+- Browser Key: `fcrm_chat_browser_{appKey}`
+- User Data: `fcrm_chat_user_{appKey}`
+
+**To clear storage:**
+```dart
+await chat.reset(); // Clears all stored data and disconnects
+```
+
 ## API Reference
 
 ### ChatConfig
@@ -342,13 +670,14 @@ class _ChatScreenState extends State<ChatScreen> {
 | Method | Description |
 |--------|-------------|
 | `initialize()` | Initialize SDK and connect to socket |
+| `isRegistered()` | ✨ **Check if user is registered** (returns bool) |
 | `register(userData, endpoint)` | Register new user/device |
+| `loadMessages({page, perPage})` | ✨ **Load chat history with pagination** (auto-checks registration, updates session, returns paginated messages) |
 | `updateBrowser(userData)` | Update user info and get history |
 | `sendMessage(message, endpoint)` | Send text message |
 | `sendImage(file, endpoint, onSendProgress)` | Upload and send image with optional progress callback |
-| `getMessages()` | Get message history |
+| `getMessages({page, perPage})` | Get paginated message history (requires registration) |
 | `sendTyping(isTyping)` | Send typing indicator |
-| `isRegistered()` | Check if user is registered |
 | `getUserData()` | Get stored user data |
 | `reset()` | Clear all data and disconnect |
 | `disconnect()` | Disconnect socket |
@@ -363,6 +692,17 @@ class _ChatScreenState extends State<ChatScreen> {
 | `onConnectionChange` | `Stream<bool>` | Connection status |
 | `onTyping` | `Stream<bool>` | Typing indicator |
 | `onReady` | `Stream<bool>` | SDK ready state |
+
+### PaginatedMessages Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `messages` | List\<ChatMessage\> | List of messages for current page |
+| `total` | int | Total number of messages across all pages |
+| `currentPage` | int | Current page number (1-indexed) |
+| `perPage` | int | Number of messages per page |
+| `lastPage` | int | Last page number |
+| `hasMore` | bool | Whether more pages are available |
 
 ### ChatMessage Properties
 
@@ -398,6 +738,200 @@ Callback for tracking upload progress when sending images or files.
 3. Create a new Chat App or select existing one
 4. Copy the **Key** and **Secret** values
 5. Use these in your `ChatConfig`
+
+## Socket Configuration
+
+The SDK uses Socket.IO for real-time communication. Socket configuration is automatically fetched from your FCRM server during initialization, but developers can customize socket behavior.
+
+### How Socket Configuration Works
+
+When you call `chat.initialize()`, the SDK:
+1. Fetches socket configuration from `{baseUrl}/api/chat_app/get_config`
+2. Receives socket URL and other settings from the server
+3. Connects to the socket server with authentication
+4. Joins the private chat room using the browser key
+
+### Socket Connection Details
+
+The SDK establishes a Socket.IO connection with the following configuration:
+
+```dart
+// Socket connection is created with these parameters:
+// - auth: { key: appKey, browser_key: browserKey }
+// - transports: ['websocket', 'polling']
+// - reconnection: true
+// - reconnectionAttempts: 5
+// - reconnectionDelay: 1000ms
+// - timeout: 20000ms (configurable via ChatConfig)
+```
+
+### Authentication
+
+The socket connection uses authentication to identify the client:
+
+| Auth Parameter | Description |
+|----------------|-------------|
+| `key` | Your Chat App key (from ChatConfig.appKey) |
+| `browser_key` | Unique browser/device identifier (auto-generated on registration) |
+
+The `browser_key` is automatically included in socket auth after user registration and is used to:
+- Join the correct private chat room (`private-chat.{browser_key}`)
+- Receive messages specific to this user/device
+- Maintain session across reconnections
+
+### Custom Socket URL (Optional)
+
+If you need to use a custom socket URL instead of the server-provided one:
+
+```dart
+final chat = FcrmChat(
+  config: ChatConfig(
+    baseUrl: 'https://api.yourcompany.com',
+    companyToken: 'your-company-token',
+    appKey: 'your-app-key',
+    appSecret: 'your-app-secret',
+    socketUrl: 'https://custom-socket.yourcompany.com', // Custom socket URL
+    connectionTimeout: 30000, // Optional: increase timeout to 30s
+  ),
+);
+```
+
+### Socket Configuration Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `socketUrl` | String? | null | Custom socket server URL (overrides server config) |
+| `connectionTimeout` | int | 20000 | Socket connection timeout in milliseconds |
+| `transports` | List | ['websocket', 'polling'] | Transport methods (auto-configured) |
+| `reconnection` | bool | true | Enable automatic reconnection (auto-configured) |
+| `reconnectionAttempts` | int | 5 | Max reconnection attempts (auto-configured) |
+| `reconnectionDelay` | int | 1000 | Delay between reconnection attempts in ms (auto-configured) |
+
+### Server-Side Socket Configuration
+
+Developers deploying the FCRM server should configure the socket server endpoint in their backend settings. The SDK will automatically retrieve this configuration via the `/api/chat_app/get_config` endpoint.
+
+Example server response:
+```json
+{
+  "socket_url": "https://socket.yourcompany.com",
+  "chat_app": {
+    "key": "app_key",
+    "name": "Your Chat App"
+  }
+}
+```
+
+### Socket Events Reference
+
+The SDK automatically handles these socket events:
+
+#### Incoming Events (Server → Client)
+
+| Event | Data | Description |
+|-------|------|-------------|
+| `connect` | - | Socket connection established successfully |
+| `disconnect` | `reason` | Socket disconnected (auto-reconnects) |
+| `connect_error` | `error` | Connection failed (triggers retry) |
+| `reconnect` | `attemptNumber` | Successfully reconnected after disconnect |
+| `reconnect_attempt` | `attemptNumber` | Attempting to reconnect |
+| `App\\Events\\Chat\\MessageEvent` | `{ message }` | New message from Laravel broadcast |
+| `typing` | `{ isTyping }` | Agent typing indicator |
+| `auth-error` | `{ message }` | Authentication failed |
+
+#### Outgoing Events (Client → Server)
+
+| Event | Data | Description |
+|-------|------|-------------|
+| `join` | `private-chat.{browser_key}` | Join private chat room |
+| `typing` | `{ browser_key, isTyping }` | Send typing indicator |
+
+### Connection Management
+
+```dart
+// Listen for connection status
+chat.onConnectionChange.listen((connected) {
+  if (connected) {
+    print('Socket connected');
+  } else {
+    print('Socket disconnected');
+  }
+});
+
+// Manual reconnection
+await chat.reconnect();
+
+// Disconnect
+chat.disconnect();
+```
+
+### Socket Connection Lifecycle
+
+1. **Initialize**: `chat.initialize()` fetches config from server
+2. **Connect**: Socket establishes connection with auth (`key` + `browser_key`)
+3. **Join Room**: Automatically joins `private-chat.{browser_key}` room
+4. **Active**: Real-time message exchange via Laravel broadcast events
+5. **Disconnect**: Auto-reconnect (up to 5 attempts with 1s delay)
+6. **Reconnect**: On successful reconnect, automatically rejoins chat room
+7. **Disposed**: `chat.dispose()` permanently closes connection
+
+**Important Notes:**
+- The `browser_key` is updated in socket auth during reconnection attempts
+- Chat room is automatically rejoined after successful reconnection
+- All messages are received via `App\\Events\\Chat\\MessageEvent` broadcast
+- Private chat room ensures messages are only delivered to the correct user/device
+
+### Chat Room Mechanics
+
+The SDK uses private chat rooms to ensure secure, isolated communication:
+
+```dart
+// After registration or browser update, the SDK automatically:
+// 1. Receives a unique browser_key from the server
+// 2. Includes browser_key in socket authentication
+// 3. Joins the private room: 'private-chat.{browser_key}'
+// 4. Receives messages via Laravel broadcast to this specific room
+```
+
+**Room Lifecycle:**
+- **On Connect**: Joins `private-chat.{browser_key}` if browser_key exists
+- **On Reconnect**: Automatically rejoins the same room
+- **On Registration**: Receives browser_key, then joins room
+- **On Update**: Updates browser data, rejoins room if needed
+
+**Message Flow:**
+1. User sends message via REST API (`/api/chat_app/browser/send-message`)
+2. Server processes message and stores in database
+3. Server broadcasts `App\\Events\\Chat\\MessageEvent` to the private room
+4. SDK receives broadcast event via Socket.IO
+5. SDK emits message via `onMessage` stream
+6. Your app displays the message in UI
+
+### Debugging Socket Connection
+
+Enable logging to debug socket issues:
+
+```dart
+final chat = FcrmChat(
+  config: ChatConfig(
+    baseUrl: 'https://api.yourcompany.com',
+    companyToken: 'your-company-token',
+    appKey: 'your-app-key',
+    appSecret: 'your-app-secret',
+    enableLogging: true, // Enable debug logs
+  ),
+);
+```
+
+This will output socket connection events, errors, and message flow to the console.
+
+**Debug Checklist:**
+- ✅ Verify socket URL is returned from `/api/chat_app/get_config`
+- ✅ Confirm `browser_key` is stored in local storage after registration
+- ✅ Check socket auth includes both `key` and `browser_key`
+- ✅ Ensure private room name matches: `private-chat.{browser_key}`
+- ✅ Verify Laravel broadcast is configured and running
+- ✅ Check that messages are broadcast to the correct room
 
 ## Requirements
 

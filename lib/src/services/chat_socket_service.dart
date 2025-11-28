@@ -84,6 +84,17 @@ class ChatSocketService {
   void _setupListeners() {
     if (_socket == null) return;
 
+    // Remove any existing listeners to prevent duplicates
+    _socket!.off('App\\Events\\Chat\\MessageEvent');
+    _socket!.off('App\\Events\\Telegram\\MessageEvent');
+    _socket!.off('typing');
+    _socket!.off('user-joined');
+    _socket!.off('user-left');
+    _socket!.off('auth-error');
+    _socket!.off('browser-key-updated');
+    _socket!.off('reconnect_attempt');
+    _socket!.off('reconnect');
+
     // Connection established
     _socket!.onConnect((_) {
       _log('Connected: ${_socket!.id}');

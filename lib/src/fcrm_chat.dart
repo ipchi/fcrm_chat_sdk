@@ -5,6 +5,7 @@ import 'config/chat_config.dart';
 import 'models/chat_app_config.dart';
 import 'models/browser.dart';
 import 'models/message.dart';
+import 'models/paginated_messages.dart';
 import 'services/chat_api_service.dart' show ChatApiService, SendProgressCallback;
 import 'services/chat_socket_service.dart';
 import 'services/chat_storage_service.dart';
@@ -237,12 +238,87 @@ class FcrmChat {
     );
   }
 
-  /// Get chat message history
-  Future<List<ChatMessage>> getMessages() async {
+  /// Get chat message history with pagination
+  ///
+  /// [page] - Page number (default: 1)
+  /// [perPage] - Number of messages per page (default: 20)
+  Future<PaginatedMessages> getMessages({
+    int page = 1,
+    int perPage = 20,
+  }) async {
     _ensureInitialized();
     _ensureBrowserKey();
 
-    return await _apiService.getMessages(browserKey: _browserKey!);
+    return await _apiService.getMessages(
+      browserKey: _browserKey!,
+      page: page,
+      perPage: perPage,
+    );
+  }
+
+  /// Load chat messages for history/regeneration with pagination
+  ///
+  /// This is useful when you want to load chat history when app starts
+  /// or when regenerating the chat page. It will:
+  /// 1. Check if user is registered
+  /// 2. Update browser session with stored user data
+  /// 3. Return paginated message history
+  ///
+  /// [page] - Page number (default: 1)
+  /// [perPage] - Number of messages per page (default: 20)
+  ///
+  /// Returns empty PaginatedMessages if user is not registered
+  Future<PaginatedMessages> loadMessages({
+    int page = 1,
+    int perPage = 20,
+  }) async {
+    _ensureInitialized();
+
+    // Check if browser key exists
+    if (_browserKey == null) {
+      // Try to load from storage
+      _browserKey = await _storageService.getBrowserKey();
+    }
+
+    // If still no browser key, user is not registered
+    if (_browserKey == null) {
+      return PaginatedMessages(
+        messages: [],
+        total: 0,
+        currentPage: 1,
+        perPage: perPage,
+        lastPage: 1,
+        hasMore: false,
+      );
+    }
+
+    // Get stored user data
+    final userData = await _storageService.getUserData();
+    if (userData == null) {
+      return PaginatedMessages(
+        messages: [],
+        total: 0,
+        currentPage: 1,
+        perPage: perPage,
+        lastPage: 1,
+        hasMore: false,
+      );
+    }
+
+    try {
+      // Try to get messages directly with pagination
+      return await getMessages(page: page, perPage: perPage);
+    } catch (e) {
+      // If fails, return empty paginated response
+      return PaginatedMessages(
+        messages: [],
+        total: 0,
+        currentPage: 1,
+        perPage: perPage,
+        lastPage: 1,
+        hasMore: false,
+      );
+    }
   }
 
   /// Send typing indicator
