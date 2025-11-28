@@ -1,13 +1,18 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
-import 'package:mime/mime.dart';
 import 'package:path/path.dart' as path;
 
 import '../config/chat_config.dart';
 import '../models/chat_app_config.dart';
 import '../models/browser.dart';
 import '../models/message.dart';
+
+/// Callback for tracking upload progress
+/// [sent] - bytes sent so far
+/// [total] - total bytes to send
+typedef SendProgressCallback = void Function(int sent, int total);
 
 /// API service for FCRM Chat
 class ChatApiService {
@@ -190,10 +195,16 @@ class ChatApiService {
   }
 
   /// Upload an image
+  ///
+  /// [browserKey] - The browser key for authentication
+  /// [imageFile] - The image file to upload
+  /// [endpoint] - Optional endpoint/screen name
+  /// [onSendProgress] - Optional callback for tracking upload progress
   Future<Map<String, dynamic>> uploadImage({
     required String browserKey,
     required File imageFile,
     String? endpoint,
+    SendProgressCallback? onSendProgress,
   }) async {
     final url = Uri.parse('${config.apiUrl}/upload-image');
 
@@ -210,7 +221,6 @@ class ChatApiService {
       request.fields['endpoint'] = endpoint;
     }
 
-    final mimeType = lookupMimeType(imageFile.path) ?? 'image/jpeg';
     final fileName = path.basename(imageFile.path);
 
     request.files.add(
@@ -221,8 +231,41 @@ class ChatApiService {
       ),
     );
 
-    final streamedResponse = await request.send()
-        .timeout(Duration(milliseconds: config.connectionTimeout));
+    http.StreamedResponse streamedResponse;
+
+    if (onSendProgress != null) {
+      // Use progress-tracking upload
+      final totalBytes = request.contentLength;
+      var sentBytes = 0;
+
+      final originalStream = request.finalize();
+      final progressStream = originalStream.transform(
+        StreamTransformer<List<int>, List<int>>.fromHandlers(
+          handleData: (data, sink) {
+            sentBytes += data.length;
+            onSendProgress(sentBytes, totalBytes);
+            sink.add(data);
+          },
+        ),
+      );
+
+      final progressRequest = http.StreamedRequest('POST', url);
+      progressRequest.headers.addAll(request.headers);
+      progressRequest.contentLength = totalBytes;
+
+      progressStream.listen(
+        progressRequest.sink.add,
+        onError: progressRequest.sink.addError,
+        onDone: progressRequest.sink.close,
+      );
+
+      streamedResponse = await progressRequest.send()
+          .timeout(Duration(milliseconds: config.connectionTimeout));
+    } else {
+      streamedResponse = await request.send()
+          .timeout(Duration(milliseconds: config.connectionTimeout));
+    }
+
     final response = await http.Response.fromStream(streamedResponse);
 
     if (response.statusCode == 200) {

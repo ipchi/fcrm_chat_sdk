@@ -7,7 +7,7 @@ A Flutter SDK for integrating FCRM Chat Apps into your mobile applications. This
 - Real-time messaging via Socket.IO
 - Secure authentication using HMAC-SHA256 signatures
 - User registration with custom fields
-- Image upload support
+- Image upload support with progress tracking
 - Typing indicators
 - Message history
 - Local storage for browser key and user data
@@ -78,6 +78,15 @@ final response = await chat.sendMessage('Hello! I need help with my order.');
 // Send image
 final imageFile = File('/path/to/image.jpg');
 final result = await chat.sendImage(imageFile);
+
+// Send image with progress tracking
+final result = await chat.sendImage(
+  imageFile,
+  onSendProgress: (sent, total) {
+    final progress = (sent / total * 100).toStringAsFixed(1);
+    print('Upload progress: $progress%');
+  },
+);
 ```
 
 ### 4. Listen for Messages
@@ -336,7 +345,7 @@ class _ChatScreenState extends State<ChatScreen> {
 | `register(userData, endpoint)` | Register new user/device |
 | `updateBrowser(userData)` | Update user info and get history |
 | `sendMessage(message, endpoint)` | Send text message |
-| `sendImage(file, endpoint)` | Upload and send image |
+| `sendImage(file, endpoint, onSendProgress)` | Upload and send image with optional progress callback |
 | `getMessages()` | Get message history |
 | `sendTyping(isTyping)` | Send typing indicator |
 | `isRegistered()` | Check if user is registered |
@@ -368,6 +377,19 @@ class _ChatScreenState extends State<ChatScreen> {
 | `createdAt` | DateTime | Timestamp |
 | `metadata` | Map? | Additional metadata |
 | `isImage` | bool | Whether message is an image |
+
+### SendProgressCallback
+
+```dart
+typedef SendProgressCallback = void Function(int sent, int total);
+```
+
+Callback for tracking upload progress when sending images or files.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `sent` | int | Bytes sent so far |
+| `total` | int | Total bytes to send |
 
 ## Getting Credentials
 

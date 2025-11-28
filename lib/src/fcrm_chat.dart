@@ -5,7 +5,7 @@ import 'config/chat_config.dart';
 import 'models/chat_app_config.dart';
 import 'models/browser.dart';
 import 'models/message.dart';
-import 'services/chat_api_service.dart';
+import 'services/chat_api_service.dart' show ChatApiService, SendProgressCallback;
 import 'services/chat_socket_service.dart';
 import 'services/chat_storage_service.dart';
 
@@ -220,9 +220,11 @@ class FcrmChat {
   ///
   /// [imageFile] - Image file to upload
   /// [endpoint] - Optional endpoint/screen name
+  /// [onSendProgress] - Optional callback for tracking upload progress (sent bytes, total bytes)
   Future<Map<String, dynamic>> sendImage(
     File imageFile, {
     String? endpoint,
+    SendProgressCallback? onSendProgress,
   }) async {
     _ensureInitialized();
     _ensureBrowserKey();
@@ -231,6 +233,7 @@ class FcrmChat {
       browserKey: _browserKey!,
       imageFile: imageFile,
       endpoint: endpoint,
+      onSendProgress: onSendProgress,
     );
   }
 
