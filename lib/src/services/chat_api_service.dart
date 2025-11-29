@@ -203,7 +203,7 @@ class ChatApiService {
 
     _log('Sending message');
 
-    final body = {
+    final Map<String, dynamic> body = {
       'chat_app_key': config.appKey,
       'browser_key': browserKey,
       'message': message,
