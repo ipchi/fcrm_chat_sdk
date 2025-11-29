@@ -323,82 +323,56 @@ class ChatApiService {
       throw UploadCancelledException();
     }
 
-    final request = http.MultipartRequest('POST', url);
-
-    // Add signature headers
-    request.headers.addAll(_getHeaders(isJson: false));
-
-    request.fields['chat_app_key'] = config.appKey;
-    request.fields['browser_key'] = browserKey;
-    if (endpoint != null) {
-      request.fields['endpoint'] = endpoint;
-    }
-
-    final fileName = path.basename(imageFile.path);
-
-    request.files.add(
-      await http.MultipartFile.fromPath(
-        'image',
-        imageFile.path,
-        filename: fileName,
-      ),
-    );
-
-    http.StreamedResponse streamedResponse;
-    StreamSubscription<List<int>>? uploadSubscription;
-
     try {
-      final totalBytes = request.contentLength;
-      var sentBytes = 0;
+      // Use simple MultipartRequest without progress tracking for reliability
+      // Progress tracking with stream transformation can break the multipart boundary
+      final request = http.MultipartRequest('POST', url);
 
-      final originalStream = request.finalize();
-      final progressRequest = http.StreamedRequest('POST', url);
-      progressRequest.headers.addAll(request.headers);
-      progressRequest.contentLength = totalBytes;
+      // Add signature headers (without Content-Type - MultipartRequest sets it automatically)
+      request.headers['Accept'] = 'application/json';
+      request.headers['X-Chat-Signature'] = config.generateSignature();
+      request.headers['X-Chat-App-Key'] = config.appKey;
 
-      // Set up cancellation listener
-      if (cancelToken != null) {
-        cancelToken.whenCancelled.then((_) {
-          uploadSubscription?.cancel();
-          progressRequest.sink.close();
-        });
+      // Add form fields
+      request.fields['chat_app_key'] = config.appKey;
+      request.fields['browser_key'] = browserKey;
+      if (endpoint != null) {
+        request.fields['endpoint'] = endpoint;
       }
 
-      final progressStream = originalStream.transform(
-        StreamTransformer<List<int>, List<int>>.fromHandlers(
-          handleData: (data, sink) {
-            if (cancelToken?.isCancelled == true) {
-              sink.close();
-              return;
-            }
-            sentBytes += data.length;
-            onSendProgress?.call(sentBytes, totalBytes);
-            sink.add(data);
-          },
+      // Add image file
+      final fileName = path.basename(imageFile.path);
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'image',
+          imageFile.path,
+          filename: fileName,
         ),
       );
 
-      uploadSubscription = progressStream.listen(
-        progressRequest.sink.add,
-        onError: progressRequest.sink.addError,
-        onDone: progressRequest.sink.close,
-      );
+      // Send request
+      http.StreamedResponse streamedResponse;
 
-      // Race between upload and cancellation
       if (cancelToken != null) {
         final result = await Future.any([
-          progressRequest.send(),
+          request.send(),
           cancelToken.whenCancelled.then((_) => throw UploadCancelledException()),
         ]);
         streamedResponse = result as http.StreamedResponse;
       } else {
-        streamedResponse = await progressRequest.send()
+        streamedResponse = await request.send()
             .timeout(Duration(milliseconds: config.connectionTimeout));
       }
 
       // Check if cancelled during upload
       if (cancelToken?.isCancelled == true) {
         throw UploadCancelledException();
+      }
+
+      // Report 100% progress on completion
+      if (onSendProgress != null) {
+        final fileSize = await imageFile.length();
+        onSendProgress(fileSize, fileSize);
       }
 
       final response = await http.Response.fromStream(streamedResponse);
@@ -418,8 +392,6 @@ class ChatApiService {
         rethrow;
       }
       rethrow;
-    } finally {
-      await uploadSubscription?.cancel();
     }
   }
 
