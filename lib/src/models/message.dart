@@ -62,6 +62,28 @@ class ChatMessage {
         (lowerContent.contains('/storage/') || lowerContent.startsWith('http'));
   }
 
+  /// Check if message has been edited
+  bool get isEdited => metadata?['edited'] == true;
+
+  /// Get the edited timestamp (if edited)
+  DateTime? get editedAt {
+    final editedAtStr = metadata?['edited_at'];
+    if (editedAtStr != null) {
+      return DateTime.tryParse(editedAtStr);
+    }
+    return null;
+  }
+
+  /// Get the original content before editing (if edited)
+  String? get originalContent => metadata?['original_content'];
+
+  /// Check if message can be edited (within 24 hours)
+  bool get canEdit {
+    final now = DateTime.now();
+    final diff = now.difference(createdAt);
+    return diff.inHours < 24;
+  }
+
   /// Copy with new values
   ChatMessage copyWith({
     int? id,

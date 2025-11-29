@@ -14,6 +14,35 @@ import '../models/paginated_messages.dart';
 /// [total] - total bytes to send
 typedef SendProgressCallback = void Function(int sent, int total);
 
+/// Token for cancelling upload operations
+class CancelToken {
+  bool _isCancelled = false;
+  final _completer = Completer<void>();
+
+  /// Whether this token has been cancelled
+  bool get isCancelled => _isCancelled;
+
+  /// Future that completes when cancelled
+  Future<void> get whenCancelled => _completer.future;
+
+  /// Cancel the operation
+  void cancel() {
+    if (!_isCancelled) {
+      _isCancelled = true;
+      _completer.complete();
+    }
+  }
+}
+
+/// Exception thrown when an upload is cancelled
+class UploadCancelledException implements Exception {
+  final String message;
+  UploadCancelledException([this.message = 'Upload was cancelled']);
+
+  @override
+  String toString() => 'UploadCancelledException: $message';
+}
+
 /// API service for FCRM Chat
 class ChatApiService {
   final ChatConfig config;
@@ -131,15 +160,16 @@ class ChatApiService {
     }
   }
 
-  /// Send a message
-  Future<SendMessageResponse> sendMessage({
+  /// Update specific user data fields (partial update)
+  ///
+  /// Only updates the fields provided, preserves other existing data
+  Future<UpdateUserDataResponse> updateUserData({
     required String browserKey,
-    required String message,
-    String? endpoint,
+    required Map<String, dynamic> data,
   }) async {
-    final url = Uri.parse('${config.apiUrl}/send-message');
+    final url = Uri.parse('${config.apiUrl}/browser/update-data');
 
-    _log('Sending message');
+    _log('Updating user data for browser: $browserKey');
 
     final response = await _client.post(
       url,
@@ -147,9 +177,47 @@ class ChatApiService {
       body: jsonEncode({
         'chat_app_key': config.appKey,
         'browser_key': browserKey,
-        'message': message,
-        'endpoint': endpoint,
+        'data': data,
       }),
+    ).timeout(Duration(milliseconds: config.connectionTimeout));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      _log('User data updated');
+      return UpdateUserDataResponse.fromJson(data);
+    } else {
+      final error = _parseError(response);
+      _log('Update user data error: $error');
+      throw ChatApiException(error, response.statusCode);
+    }
+  }
+
+  /// Send a message
+  Future<SendMessageResponse> sendMessage({
+    required String browserKey,
+    required String message,
+    String? endpoint,
+    Map<String, dynamic>? metadata,
+  }) async {
+    final url = Uri.parse('${config.apiUrl}/send-message');
+
+    _log('Sending message');
+
+    final body = {
+      'chat_app_key': config.appKey,
+      'browser_key': browserKey,
+      'message': message,
+      'endpoint': endpoint,
+    };
+
+    if (metadata != null && metadata.isNotEmpty) {
+      body['metadata'] = metadata;
+    }
+
+    final response = await _client.post(
+      url,
+      headers: _getHeaders(),
+      body: jsonEncode(body),
     ).timeout(Duration(milliseconds: config.connectionTimeout));
 
     if (response.statusCode == 200) {
@@ -159,6 +227,42 @@ class ChatApiService {
     } else {
       final error = _parseError(response);
       _log('Send error: $error');
+      throw ChatApiException(error, response.statusCode);
+    }
+  }
+
+  /// Edit a message (only allowed within 1 day of creation)
+  ///
+  /// [browserKey] - The browser key for authentication
+  /// [messageId] - The ID of the message to edit
+  /// [content] - The new content for the message
+  Future<EditMessageResponse> editMessage({
+    required String browserKey,
+    required int messageId,
+    required String content,
+  }) async {
+    final url = Uri.parse('${config.apiUrl}/edit-message');
+
+    _log('Editing message: $messageId');
+
+    final response = await _client.post(
+      url,
+      headers: _getHeaders(),
+      body: jsonEncode({
+        'chat_app_key': config.appKey,
+        'browser_key': browserKey,
+        'message_id': messageId,
+        'content': content,
+      }),
+    ).timeout(Duration(milliseconds: config.connectionTimeout));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      _log('Message edited: $messageId');
+      return EditMessageResponse.fromJson(data);
+    } else {
+      final error = _parseError(response);
+      _log('Edit error: $error');
       throw ChatApiException(error, response.statusCode);
     }
   }
@@ -202,15 +306,22 @@ class ChatApiService {
   /// [imageFile] - The image file to upload
   /// [endpoint] - Optional endpoint/screen name
   /// [onSendProgress] - Optional callback for tracking upload progress
+  /// [cancelToken] - Optional token to cancel the upload
   Future<Map<String, dynamic>> uploadImage({
     required String browserKey,
     required File imageFile,
     String? endpoint,
     SendProgressCallback? onSendProgress,
+    CancelToken? cancelToken,
   }) async {
     final url = Uri.parse('${config.apiUrl}/upload-image');
 
     _log('Uploading image: ${imageFile.path}');
+
+    // Check if already cancelled
+    if (cancelToken?.isCancelled == true) {
+      throw UploadCancelledException();
+    }
 
     final request = http.MultipartRequest('POST', url);
 
@@ -234,51 +345,107 @@ class ChatApiService {
     );
 
     http.StreamedResponse streamedResponse;
+    StreamSubscription<List<int>>? uploadSubscription;
 
-    if (onSendProgress != null) {
-      // Use progress-tracking upload
+    try {
       final totalBytes = request.contentLength;
       var sentBytes = 0;
 
       final originalStream = request.finalize();
+      final progressRequest = http.StreamedRequest('POST', url);
+      progressRequest.headers.addAll(request.headers);
+      progressRequest.contentLength = totalBytes;
+
+      // Set up cancellation listener
+      if (cancelToken != null) {
+        cancelToken.whenCancelled.then((_) {
+          uploadSubscription?.cancel();
+          progressRequest.sink.close();
+        });
+      }
+
       final progressStream = originalStream.transform(
         StreamTransformer<List<int>, List<int>>.fromHandlers(
           handleData: (data, sink) {
+            if (cancelToken?.isCancelled == true) {
+              sink.close();
+              return;
+            }
             sentBytes += data.length;
-            onSendProgress(sentBytes, totalBytes);
+            onSendProgress?.call(sentBytes, totalBytes);
             sink.add(data);
           },
         ),
       );
 
-      final progressRequest = http.StreamedRequest('POST', url);
-      progressRequest.headers.addAll(request.headers);
-      progressRequest.contentLength = totalBytes;
-
-      progressStream.listen(
+      uploadSubscription = progressStream.listen(
         progressRequest.sink.add,
         onError: progressRequest.sink.addError,
         onDone: progressRequest.sink.close,
       );
 
-      streamedResponse = await progressRequest.send()
-          .timeout(Duration(milliseconds: config.connectionTimeout));
-    } else {
-      streamedResponse = await request.send()
-          .timeout(Duration(milliseconds: config.connectionTimeout));
-    }
+      // Race between upload and cancellation
+      if (cancelToken != null) {
+        final result = await Future.any([
+          progressRequest.send(),
+          cancelToken.whenCancelled.then((_) => throw UploadCancelledException()),
+        ]);
+        streamedResponse = result as http.StreamedResponse;
+      } else {
+        streamedResponse = await progressRequest.send()
+            .timeout(Duration(milliseconds: config.connectionTimeout));
+      }
 
-    final response = await http.Response.fromStream(streamedResponse);
+      // Check if cancelled during upload
+      if (cancelToken?.isCancelled == true) {
+        throw UploadCancelledException();
+      }
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      _log('Image uploaded: ${data['image_url']}');
-      return data;
-    } else {
-      final error = _parseError(response);
-      _log('Upload error: $error');
-      throw ChatApiException(error, response.statusCode);
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        _log('Image uploaded: ${data['image_url']}');
+        return data;
+      } else {
+        final error = _parseError(response);
+        _log('Upload error: $error');
+        throw ChatApiException(error, response.statusCode);
+      }
+    } catch (e) {
+      if (e is UploadCancelledException) {
+        _log('Upload cancelled');
+        rethrow;
+      }
+      rethrow;
+    } finally {
+      await uploadSubscription?.cancel();
     }
+  }
+
+  /// Upload a file
+  ///
+  /// [browserKey] - The browser key for authentication
+  /// [file] - The file to upload
+  /// [endpoint] - Optional endpoint/screen name
+  /// [onSendProgress] - Optional callback for tracking upload progress
+  /// [cancelToken] - Optional token to cancel the upload
+  Future<Map<String, dynamic>> uploadFile({
+    required String browserKey,
+    required File file,
+    String? endpoint,
+    SendProgressCallback? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
+    // For now, use the same endpoint as image upload
+    // Backend can be extended to support generic file uploads
+    return uploadImage(
+      browserKey: browserKey,
+      imageFile: file,
+      endpoint: endpoint,
+      onSendProgress: onSendProgress,
+      cancelToken: cancelToken,
+    );
   }
 
   /// Parse error from response

@@ -8,6 +8,10 @@ A Flutter SDK for integrating FCRM Chat Apps into your mobile applications. This
 - Secure authentication using HMAC-SHA256 signatures
 - User registration with custom fields
 - Image upload support with progress tracking
+- **Cancellable uploads** - Cancel image/file uploads in progress
+- **Message editing** - Edit messages within 24 hours
+- **Partial user data updates** - Update name, phone, email individually
+- **Message metadata** - Attach custom metadata to messages
 - Typing indicators
 - **Paginated message history** with infinite scrolling support
 - Local storage for browser key and user data
@@ -123,9 +127,99 @@ try {
 } catch (e) {
   print('Failed to send image: $e');
 }
+
+// Send image with cancellation support
+final cancelToken = CancelToken();
+
+// Start upload
+final uploadFuture = chat.sendImage(
+  imageFile,
+  onSendProgress: (sent, total) {
+    print('Progress: ${(sent / total * 100).toStringAsFixed(1)}%');
+  },
+  cancelToken: cancelToken,
+);
+
+// Cancel button handler
+void onCancelPressed() {
+  cancelToken.cancel();
+}
+
+try {
+  final result = await uploadFuture;
+  print('Uploaded: ${result['image_url']}');
+} on UploadCancelledException {
+  print('Upload was cancelled');
+}
 ```
 
-### 4. Listen for Messages
+### 4. Send Message with Metadata
+
+```dart
+// Send message with custom metadata
+final response = await chat.sendMessage(
+  'I need help with order #12345',
+  metadata: {
+    'order_id': 12345,
+    'source': 'order_detail_screen',
+    'priority': 'high',
+  },
+);
+```
+
+### 5. Edit Messages
+
+```dart
+// Edit a message (only within 24 hours of creation)
+try {
+  final result = await chat.editMessage(
+    messageId: 123,
+    content: 'Updated message content',
+  );
+  print('Message edited successfully');
+} on ChatApiException catch (e) {
+  if (e.statusCode == 403) {
+    print('Cannot edit: message is older than 24 hours');
+  } else {
+    print('Edit failed: ${e.message}');
+  }
+}
+
+// Check if a message can be edited
+for (final message in messages) {
+  if (message.canEdit) {
+    print('Message ${message.id} can be edited');
+  }
+
+  if (message.isEdited) {
+    print('Edited at: ${message.editedAt}');
+    print('Original: ${message.originalContent}');
+  }
+}
+```
+
+### 6. Update User Data
+
+```dart
+// Update only the name
+await chat.updateName('New Name');
+
+// Update only the phone
+await chat.updatePhone('+1234567890');
+
+// Update only the email
+await chat.updateEmail('newemail@example.com');
+
+// Update multiple fields at once (partial update)
+final updatedData = await chat.updateUserData({
+  'name': 'John Doe',
+  'phone': '+1234567890',
+  'company': 'Acme Inc',  // Custom fields supported
+});
+print('Updated user data: $updatedData');
+```
+
+### 7. Listen for Messages
 
 ```dart
 // Listen for incoming messages
@@ -148,7 +242,7 @@ chat.onTyping.listen((isTyping) {
 });
 ```
 
-### 5. Check Registration Status
+### 8. Check Registration Status
 
 ```dart
 // Check if user is already registered
@@ -165,7 +259,7 @@ if (isRegistered) {
 }
 ```
 
-### 6. Load Chat History with Pagination
+### 9. Load Chat History with Pagination
 
 ```dart
 // Load chat history when app starts or when regenerating chat page
@@ -198,7 +292,7 @@ final page2 = await chat.loadMessages(page: 2, perPage: 50);
 print('Loaded page 2 with ${page2.messages.length} messages');
 ```
 
-### 7. Implement Infinite Scrolling
+### 10. Implement Infinite Scrolling
 
 ```dart
 class ChatScreen extends StatefulWidget {
@@ -284,7 +378,7 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 ```
 
-### 8. Get Message History (Alternative Method)
+### 11. Get Message History (Alternative Method)
 
 ```dart
 // Fetch previous messages with pagination (requires registered user)
@@ -674,8 +768,14 @@ await chat.reset(); // Clears all stored data and disconnects
 | `register(userData, endpoint)` | Register new user/device |
 | `loadMessages({page, perPage})` | ✨ **Load chat history with pagination** (auto-checks registration, updates session, returns paginated messages) |
 | `updateBrowser(userData)` | Update user info and get history |
-| `sendMessage(message, endpoint)` | Send text message |
-| `sendImage(file, endpoint, onSendProgress)` | Upload and send image with optional progress callback |
+| `updateUserData(data)` | ✨ **Partial update user data** - update only specific fields |
+| `updateName(name)` | ✨ Convenience method to update only name |
+| `updatePhone(phone)` | ✨ Convenience method to update only phone |
+| `updateEmail(email)` | ✨ Convenience method to update only email |
+| `sendMessage(message, {endpoint, metadata})` | Send text message with optional metadata |
+| `editMessage({messageId, content})` | ✨ **Edit a message** (within 24 hours) |
+| `sendImage(file, {endpoint, onSendProgress, cancelToken})` | Upload and send image with progress and cancellation |
+| `sendFile(file, {endpoint, onSendProgress, cancelToken})` | ✨ Upload and send file with progress and cancellation |
 | `getMessages({page, perPage})` | Get paginated message history (requires registration) |
 | `sendTyping(isTyping)` | Send typing indicator |
 | `getUserData()` | Get stored user data |
@@ -717,6 +817,10 @@ await chat.reset(); // Clears all stored data and disconnects
 | `createdAt` | DateTime | Timestamp |
 | `metadata` | Map? | Additional metadata |
 | `isImage` | bool | Whether message is an image |
+| `isEdited` | bool | ✨ Whether message has been edited |
+| `editedAt` | DateTime? | ✨ Timestamp when message was edited |
+| `originalContent` | String? | ✨ Original content before editing |
+| `canEdit` | bool | ✨ Whether message can be edited (within 24 hours) |
 
 ### SendProgressCallback
 
@@ -730,6 +834,43 @@ Callback for tracking upload progress when sending images or files.
 |-----------|------|-------------|
 | `sent` | int | Bytes sent so far |
 | `total` | int | Total bytes to send |
+
+### CancelToken
+
+Token for cancelling upload operations.
+
+```dart
+final cancelToken = CancelToken();
+
+// Check if cancelled
+if (cancelToken.isCancelled) {
+  print('Upload was cancelled');
+}
+
+// Cancel the upload
+cancelToken.cancel();
+
+// Wait for cancellation
+await cancelToken.whenCancelled;
+```
+
+| Property/Method | Type | Description |
+|-----------------|------|-------------|
+| `isCancelled` | bool | Whether token has been cancelled |
+| `cancel()` | void | Cancel the operation |
+| `whenCancelled` | Future\<void\> | Future that completes when cancelled |
+
+### UploadCancelledException
+
+Exception thrown when an upload is cancelled.
+
+```dart
+try {
+  await chat.sendImage(file, cancelToken: cancelToken);
+} on UploadCancelledException {
+  print('Upload was cancelled by user');
+}
+```
 
 ## Getting Credentials
 

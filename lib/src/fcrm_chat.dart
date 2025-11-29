@@ -6,7 +6,7 @@ import 'models/chat_app_config.dart';
 import 'models/browser.dart';
 import 'models/message.dart';
 import 'models/paginated_messages.dart';
-import 'services/chat_api_service.dart' show ChatApiService, SendProgressCallback;
+import 'services/chat_api_service.dart' show ChatApiService, SendProgressCallback, CancelToken, UploadCancelledException;
 import 'services/chat_socket_service.dart';
 import 'services/chat_storage_service.dart';
 
@@ -199,13 +199,72 @@ class FcrmChat {
     return messages;
   }
 
+  /// Update specific user data fields (partial update)
+  ///
+  /// Only updates the provided fields, preserves other existing data.
+  /// Useful for updating individual fields like name, phone, email, etc.
+  ///
+  /// Example:
+  /// ```dart
+  /// // Update only name
+  /// await chat.updateUserData({'name': 'New Name'});
+  ///
+  /// // Update multiple fields
+  /// await chat.updateUserData({
+  ///   'name': 'John Doe',
+  ///   'phone': '+1234567890',
+  /// });
+  /// ```
+  ///
+  /// Returns the complete updated user data
+  Future<Map<String, dynamic>> updateUserData(Map<String, dynamic> data) async {
+    _ensureInitialized();
+    _ensureBrowserKey();
+
+    final response = await _apiService.updateUserData(
+      browserKey: _browserKey!,
+      data: data,
+    );
+
+    // Update stored user data
+    await _storageService.saveUserData(response.userData);
+
+    return response.userData;
+  }
+
+  /// Convenience method to update only the client name
+  ///
+  /// [name] - New name for the client
+  /// Returns the complete updated user data
+  Future<Map<String, dynamic>> updateName(String name) async {
+    return updateUserData({'name': name});
+  }
+
+  /// Convenience method to update only the client phone
+  ///
+  /// [phone] - New phone for the client
+  /// Returns the complete updated user data
+  Future<Map<String, dynamic>> updatePhone(String phone) async {
+    return updateUserData({'phone': phone});
+  }
+
+  /// Convenience method to update only the client email
+  ///
+  /// [email] - New email for the client
+  /// Returns the complete updated user data
+  Future<Map<String, dynamic>> updateEmail(String email) async {
+    return updateUserData({'email': email});
+  }
+
   /// Send a text message
   ///
   /// [message] - Message content
   /// [endpoint] - Optional endpoint/screen name
+  /// [metadata] - Optional metadata to attach to the message
   Future<SendMessageResponse> sendMessage(
     String message, {
     String? endpoint,
+    Map<String, dynamic>? metadata,
   }) async {
     _ensureInitialized();
     _ensureBrowserKey();
@@ -214,6 +273,43 @@ class FcrmChat {
       browserKey: _browserKey!,
       message: message,
       endpoint: endpoint,
+      metadata: metadata,
+    );
+  }
+
+  /// Edit a message (only allowed within 1 day of creation)
+  ///
+  /// [messageId] - The ID of the message to edit
+  /// [content] - The new content for the message
+  ///
+  /// Throws an exception if:
+  /// - Message is older than 24 hours
+  /// - Message was not sent by this browser/user
+  /// - Message doesn't exist
+  ///
+  /// Example:
+  /// ```dart
+  /// try {
+  ///   final result = await chat.editMessage(
+  ///     messageId: 123,
+  ///     content: 'Updated message content',
+  ///   );
+  ///   print('Message edited: ${result.content}');
+  /// } catch (e) {
+  ///   print('Cannot edit: $e');
+  /// }
+  /// ```
+  Future<EditMessageResponse> editMessage({
+    required int messageId,
+    required String content,
+  }) async {
+    _ensureInitialized();
+    _ensureBrowserKey();
+
+    return await _apiService.editMessage(
+      browserKey: _browserKey!,
+      messageId: messageId,
+      content: content,
     );
   }
 
@@ -222,10 +318,38 @@ class FcrmChat {
   /// [imageFile] - Image file to upload
   /// [endpoint] - Optional endpoint/screen name
   /// [onSendProgress] - Optional callback for tracking upload progress (sent bytes, total bytes)
+  /// [cancelToken] - Optional token to cancel the upload
+  ///
+  /// Example with cancellation:
+  /// ```dart
+  /// final cancelToken = CancelToken();
+  ///
+  /// // Start upload
+  /// final uploadFuture = chat.sendImage(
+  ///   imageFile,
+  ///   onSendProgress: (sent, total) {
+  ///     print('Progress: ${(sent / total * 100).toStringAsFixed(1)}%');
+  ///   },
+  ///   cancelToken: cancelToken,
+  /// );
+  ///
+  /// // Cancel after 2 seconds
+  /// Future.delayed(Duration(seconds: 2), () {
+  ///   cancelToken.cancel();
+  /// });
+  ///
+  /// try {
+  ///   final result = await uploadFuture;
+  ///   print('Uploaded: ${result['image_url']}');
+  /// } on UploadCancelledException {
+  ///   print('Upload was cancelled');
+  /// }
+  /// ```
   Future<Map<String, dynamic>> sendImage(
     File imageFile, {
     String? endpoint,
     SendProgressCallback? onSendProgress,
+    CancelToken? cancelToken,
   }) async {
     _ensureInitialized();
     _ensureBrowserKey();
@@ -235,6 +359,49 @@ class FcrmChat {
       imageFile: imageFile,
       endpoint: endpoint,
       onSendProgress: onSendProgress,
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// Upload and send a file
+  ///
+  /// [file] - File to upload
+  /// [endpoint] - Optional endpoint/screen name
+  /// [onSendProgress] - Optional callback for tracking upload progress (sent bytes, total bytes)
+  /// [cancelToken] - Optional token to cancel the upload
+  ///
+  /// Example:
+  /// ```dart
+  /// final cancelToken = CancelToken();
+  ///
+  /// try {
+  ///   final result = await chat.sendFile(
+  ///     myFile,
+  ///     onSendProgress: (sent, total) {
+  ///       print('Progress: ${(sent / total * 100).toStringAsFixed(1)}%');
+  ///     },
+  ///     cancelToken: cancelToken,
+  ///   );
+  ///   print('Uploaded: ${result['image_url']}');
+  /// } on UploadCancelledException {
+  ///   print('Upload was cancelled');
+  /// }
+  /// ```
+  Future<Map<String, dynamic>> sendFile(
+    File file, {
+    String? endpoint,
+    SendProgressCallback? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
+    _ensureInitialized();
+    _ensureBrowserKey();
+
+    return await _apiService.uploadFile(
+      browserKey: _browserKey!,
+      file: file,
+      endpoint: endpoint,
+      onSendProgress: onSendProgress,
+      cancelToken: cancelToken,
     );
   }
 

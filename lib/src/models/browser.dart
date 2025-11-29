@@ -84,3 +84,52 @@ class SendMessageResponse {
     );
   }
 }
+
+/// Update user data response
+class UpdateUserDataResponse {
+  final bool success;
+  final Map<String, dynamic> userData;
+  final String? message;
+
+  UpdateUserDataResponse({
+    required this.success,
+    required this.userData,
+    this.message,
+  });
+
+  factory UpdateUserDataResponse.fromJson(Map<String, dynamic> json) {
+    return UpdateUserDataResponse(
+      success: json['success'] ?? false,
+      userData: Map<String, dynamic>.from(json['user_data'] ?? {}),
+      message: json['message'],
+    );
+  }
+}
+
+/// Edit message response
+class EditMessageResponse {
+  final bool success;
+  final int messageId;
+  final String content;
+  final bool edited;
+  final String? editedAt;
+
+  EditMessageResponse({
+    required this.success,
+    required this.messageId,
+    required this.content,
+    required this.edited,
+    this.editedAt,
+  });
+
+  factory EditMessageResponse.fromJson(Map<String, dynamic> json) {
+    final message = json['message'] as Map<String, dynamic>?;
+    return EditMessageResponse(
+      success: json['success'] ?? false,
+      messageId: message?['id'] ?? 0,
+      content: message?['content'] ?? '',
+      edited: message?['edited'] ?? false,
+      editedAt: message?['edited_at'],
+    );
+  }
+}
