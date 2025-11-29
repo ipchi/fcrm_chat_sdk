@@ -85,8 +85,11 @@ class ChatSocketService {
     if (_socket == null) return;
 
     // Remove any existing listeners to prevent duplicates
+    _socket!.off('App:Events:Chat:MessageEvent');
     _socket!.off('App\\Events\\Chat\\MessageEvent');
+    _socket!.off('App:Events:Telegram:MessageEvent');
     _socket!.off('App\\Events\\Telegram\\MessageEvent');
+    _socket!.off('App:Events:Chat:MessageEditedEvent');
     _socket!.off('typing');
     _socket!.off('user-joined');
     _socket!.off('user-left');
@@ -135,8 +138,9 @@ class ChatSocketService {
     });
 
     // Laravel broadcast messages (Chat App)
-    _socket!.on('App\\Events\\Chat\\MessageEvent', (data) {
-      _log('Message received: $data');
+    // Listen for both formats: colons (from backend) and backslashes (legacy)
+    _socket!.on('App:Events:Chat:MessageEvent', (data) {
+      _log('Message received (colon format): $data');
       try {
         final socketMessage = SocketMessage.fromJson(
           data is Map<String, dynamic> ? data : {'message': data},
@@ -147,9 +151,35 @@ class ChatSocketService {
       }
     });
 
-    // Telegram messages (if applicable)
+    // Legacy backslash format (for backward compatibility)
+    _socket!.on('App\\Events\\Chat\\MessageEvent', (data) {
+      _log('Message received (backslash format): $data');
+      try {
+        final socketMessage = SocketMessage.fromJson(
+          data is Map<String, dynamic> ? data : {'message': data},
+        );
+        _messageController.add(socketMessage);
+      } catch (e) {
+        _log('Error parsing message: $e');
+      }
+    });
+
+    // Telegram messages (colon format from backend)
+    _socket!.on('App:Events:Telegram:MessageEvent', (data) {
+      _log('Telegram message received (colon format): $data');
+      try {
+        final socketMessage = SocketMessage.fromJson(
+          data is Map<String, dynamic> ? data : {'message': data},
+        );
+        _messageController.add(socketMessage);
+      } catch (e) {
+        _log('Error parsing telegram message: $e');
+      }
+    });
+
+    // Telegram messages (legacy backslash format)
     _socket!.on('App\\Events\\Telegram\\MessageEvent', (data) {
-      _log('Telegram message received: $data');
+      _log('Telegram message received (backslash format): $data');
       try {
         final socketMessage = SocketMessage.fromJson(
           data is Map<String, dynamic> ? data : {'message': data},
@@ -200,7 +230,8 @@ class ChatSocketService {
       return;
     }
 
-    final roomName = 'private-chat.$browserKey';
+    // Use underscore format to match backend channel naming
+    final roomName = 'private-chat_$browserKey';
     _socket!.emit('join', roomName);
     _currentBrowserKey = browserKey;
     _log('Joined room: $roomName');
@@ -210,7 +241,8 @@ class ChatSocketService {
   void leaveChatRoom(String browserKey) {
     if (_socket?.connected != true) return;
 
-    final roomName = 'private-chat.$browserKey';
+    // Use underscore format to match backend channel naming
+    final roomName = 'private-chat_$browserKey';
     _socket!.emit('leave', roomName);
     _log('Left room: $roomName');
   }

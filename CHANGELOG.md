@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.3] - 2025-11-29
+
+### Fixed
+- **Socket messages not received** - Fixed critical event name mismatch between SDK and backend
+  - SDK now listens for `App:Events:Chat:MessageEvent` (colon format) sent by backend
+  - Added backward compatibility for legacy backslash format
+- **Socket channel name mismatch** - Fixed room naming format
+  - Changed from `private-chat.{key}` (dot) to `private-chat_{key}` (underscore) to match backend
+- Added listener cleanup for new event formats to prevent duplicate messages
+
 ## [1.2.2] - 2025-11-20
 
 ### Fixed

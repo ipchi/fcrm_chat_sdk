@@ -916,7 +916,7 @@ The socket connection uses authentication to identify the client:
 | `browser_key` | Unique browser/device identifier (auto-generated on registration) |
 
 The `browser_key` is automatically included in socket auth after user registration and is used to:
-- Join the correct private chat room (`private-chat.{browser_key}`)
+- Join the correct private chat room (`private-chat_{browser_key}`)
 - Receive messages specific to this user/device
 - Maintain session across reconnections
 
@@ -976,7 +976,7 @@ The SDK automatically handles these socket events:
 | `connect_error` | `error` | Connection failed (triggers retry) |
 | `reconnect` | `attemptNumber` | Successfully reconnected after disconnect |
 | `reconnect_attempt` | `attemptNumber` | Attempting to reconnect |
-| `App\\Events\\Chat\\MessageEvent` | `{ message }` | New message from Laravel broadcast |
+| `App:Events:Chat:MessageEvent` | `{ message }` | New message from Laravel broadcast |
 | `typing` | `{ isTyping }` | Agent typing indicator |
 | `auth-error` | `{ message }` | Authentication failed |
 
@@ -984,7 +984,7 @@ The SDK automatically handles these socket events:
 
 | Event | Data | Description |
 |-------|------|-------------|
-| `join` | `private-chat.{browser_key}` | Join private chat room |
+| `join` | `private-chat_{browser_key}` | Join private chat room |
 | `typing` | `{ browser_key, isTyping }` | Send typing indicator |
 
 ### Connection Management
@@ -1030,12 +1030,12 @@ The SDK uses private chat rooms to ensure secure, isolated communication:
 // After registration or browser update, the SDK automatically:
 // 1. Receives a unique browser_key from the server
 // 2. Includes browser_key in socket authentication
-// 3. Joins the private room: 'private-chat.{browser_key}'
+// 3. Joins the private room: 'private-chat_{browser_key}'
 // 4. Receives messages via Laravel broadcast to this specific room
 ```
 
 **Room Lifecycle:**
-- **On Connect**: Joins `private-chat.{browser_key}` if browser_key exists
+- **On Connect**: Joins `private-chat_{browser_key}` if browser_key exists
 - **On Reconnect**: Automatically rejoins the same room
 - **On Registration**: Receives browser_key, then joins room
 - **On Update**: Updates browser data, rejoins room if needed
@@ -1043,7 +1043,7 @@ The SDK uses private chat rooms to ensure secure, isolated communication:
 **Message Flow:**
 1. User sends message via REST API (`/api/chat_app/browser/send-message`)
 2. Server processes message and stores in database
-3. Server broadcasts `App\\Events\\Chat\\MessageEvent` to the private room
+3. Server broadcasts `App:Events:Chat:MessageEvent` to the private room
 4. SDK receives broadcast event via Socket.IO
 5. SDK emits message via `onMessage` stream
 6. Your app displays the message in UI
@@ -1070,9 +1070,9 @@ This will output socket connection events, errors, and message flow to the conso
 - ✅ Verify socket URL is returned from `/api/chat_app/get_config`
 - ✅ Confirm `browser_key` is stored in local storage after registration
 - ✅ Check socket auth includes both `key` and `browser_key`
-- ✅ Ensure private room name matches: `private-chat.{browser_key}`
+- ✅ Ensure private room name matches: `private-chat_{browser_key}`
 - ✅ Verify Laravel broadcast is configured and running
-- ✅ Check that messages are broadcast to the correct room
+- ✅ Check that messages are broadcast to the correct room (event: `App:Events:Chat:MessageEvent`)
 
 ## Requirements
 
