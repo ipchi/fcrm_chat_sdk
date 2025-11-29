@@ -7,6 +7,9 @@ class ChatMessage {
   final String? senderName;
   final String? senderType;
   final DateTime createdAt;
+  final DateTime? updatedAt;
+  final bool isRead;
+  final DateTime? readAt;
   final Map<String, dynamic>? metadata;
 
   ChatMessage({
@@ -17,6 +20,9 @@ class ChatMessage {
     this.senderName,
     this.senderType,
     required this.createdAt,
+    this.updatedAt,
+    this.isRead = false,
+    this.readAt,
     this.metadata,
   });
 
@@ -32,6 +38,13 @@ class ChatMessage {
       createdAt: json['created_at'] != null
           ? DateTime.parse(json['created_at'])
           : DateTime.now(),
+      updatedAt: json['updated_at'] != null
+          ? DateTime.parse(json['updated_at'])
+          : null,
+      isRead: json['is_read'] ?? false,
+      readAt: json['read_at'] != null
+          ? DateTime.parse(json['read_at'])
+          : null,
       metadata: json['metadata'] is Map<String, dynamic> ? json['metadata'] : null,
     );
   }
@@ -46,6 +59,9 @@ class ChatMessage {
       'sender_name': senderName,
       'sender_type': senderType,
       'created_at': createdAt.toIso8601String(),
+      'updated_at': updatedAt?.toIso8601String(),
+      'is_read': isRead,
+      'read_at': readAt?.toIso8601String(),
       'metadata': metadata,
     };
   }
@@ -93,6 +109,9 @@ class ChatMessage {
     String? senderName,
     String? senderType,
     DateTime? createdAt,
+    DateTime? updatedAt,
+    bool? isRead,
+    DateTime? readAt,
     Map<String, dynamic>? metadata,
   }) {
     return ChatMessage(
@@ -103,6 +122,9 @@ class ChatMessage {
       senderName: senderName ?? this.senderName,
       senderType: senderType ?? this.senderType,
       createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      isRead: isRead ?? this.isRead,
+      readAt: readAt ?? this.readAt,
       metadata: metadata ?? this.metadata,
     );
   }
