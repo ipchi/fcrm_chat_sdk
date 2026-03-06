@@ -6,7 +6,8 @@ import 'models/chat_app_config.dart';
 import 'models/browser.dart';
 import 'models/message.dart';
 import 'models/paginated_messages.dart';
-import 'services/chat_api_service.dart' show ChatApiService, SendProgressCallback, CancelToken, UploadCancelledException;
+import 'services/chat_api_service.dart'
+    show ChatApiService, SendProgressCallback, CancelToken;
 import 'services/chat_socket_service.dart';
 import 'services/chat_storage_service.dart';
 
@@ -81,9 +82,13 @@ class FcrmChat {
     _socketService = ChatSocketService(enableLogging: config.enableLogging);
     _storageService = ChatStorageService(appKey: config.appKey);
 
-    // Forward socket events
+    // Forward socket events, filtering out image upload placeholders
     _socketService.onMessage.listen((socketMessage) {
-      _messageController.add(socketMessage.message);
+      final message = socketMessage.message;
+      if (message.isImage && message.content == '[Image uploading...]') {
+        return;
+      }
+      _messageController.add(message);
     });
     _socketService.onConnectionChange.listen((connected) {
       _connectionController.add(connected);

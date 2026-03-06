@@ -76,8 +76,7 @@ class ChatApiService {
   /// Get chat app configuration
   Future<ChatAppRemoteConfig> getConfig() async {
     final signature = config.generateSignature();
-    final url = Uri.parse('${config.apiUrl}/config')
-        .replace(queryParameters: {
+    final url = Uri.parse('${config.apiUrl}/config').replace(queryParameters: {
       'key': config.appKey,
       'sig': signature,
     });
@@ -109,15 +108,17 @@ class ChatApiService {
 
     _log('Registering browser');
 
-    final response = await _client.post(
-      url,
-      headers: _getHeaders(),
-      body: jsonEncode({
-        'chat_app_key': config.appKey,
-        'user_data': userData,
-        'endpoint': endpoint,
-      }),
-    ).timeout(Duration(milliseconds: config.connectionTimeout));
+    final response = await _client
+        .post(
+          url,
+          headers: _getHeaders(),
+          body: jsonEncode({
+            'chat_app_key': config.appKey,
+            'user_data': userData,
+            'endpoint': endpoint,
+          }),
+        )
+        .timeout(Duration(milliseconds: config.connectionTimeout));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -139,15 +140,17 @@ class ChatApiService {
 
     _log('Updating browser: $browserKey');
 
-    final response = await _client.post(
-      url,
-      headers: _getHeaders(),
-      body: jsonEncode({
-        'chat_app_key': config.appKey,
-        'browser_key': browserKey,
-        'user_data': userData,
-      }),
-    ).timeout(Duration(milliseconds: config.connectionTimeout));
+    final response = await _client
+        .post(
+          url,
+          headers: _getHeaders(),
+          body: jsonEncode({
+            'chat_app_key': config.appKey,
+            'browser_key': browserKey,
+            'user_data': userData,
+          }),
+        )
+        .timeout(Duration(milliseconds: config.connectionTimeout));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -171,15 +174,17 @@ class ChatApiService {
 
     _log('Updating user data for browser: $browserKey');
 
-    final response = await _client.post(
-      url,
-      headers: _getHeaders(),
-      body: jsonEncode({
-        'chat_app_key': config.appKey,
-        'browser_key': browserKey,
-        'data': data,
-      }),
-    ).timeout(Duration(milliseconds: config.connectionTimeout));
+    final response = await _client
+        .post(
+          url,
+          headers: _getHeaders(),
+          body: jsonEncode({
+            'chat_app_key': config.appKey,
+            'browser_key': browserKey,
+            'data': data,
+          }),
+        )
+        .timeout(Duration(milliseconds: config.connectionTimeout));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -214,11 +219,13 @@ class ChatApiService {
       body['metadata'] = metadata;
     }
 
-    final response = await _client.post(
-      url,
-      headers: _getHeaders(),
-      body: jsonEncode(body),
-    ).timeout(Duration(milliseconds: config.connectionTimeout));
+    final response = await _client
+        .post(
+          url,
+          headers: _getHeaders(),
+          body: jsonEncode(body),
+        )
+        .timeout(Duration(milliseconds: config.connectionTimeout));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -245,16 +252,18 @@ class ChatApiService {
 
     _log('Editing message: $messageId');
 
-    final response = await _client.post(
-      url,
-      headers: _getHeaders(),
-      body: jsonEncode({
-        'chat_app_key': config.appKey,
-        'browser_key': browserKey,
-        'message_id': messageId,
-        'content': content,
-      }),
-    ).timeout(Duration(milliseconds: config.connectionTimeout));
+    final response = await _client
+        .post(
+          url,
+          headers: _getHeaders(),
+          body: jsonEncode({
+            'chat_app_key': config.appKey,
+            'browser_key': browserKey,
+            'message_id': messageId,
+            'content': content,
+          }),
+        )
+        .timeout(Duration(milliseconds: config.connectionTimeout));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -277,21 +286,24 @@ class ChatApiService {
 
     _log('Getting messages (page: $page, perPage: $perPage)');
 
-    final response = await _client.post(
-      url,
-      headers: _getHeaders(),
-      body: jsonEncode({
-        'chat_app_key': config.appKey,
-        'browser_key': browserKey,
-        'page': page,
-        'per_page': perPage,
-      }),
-    ).timeout(Duration(milliseconds: config.connectionTimeout));
+    final response = await _client
+        .post(
+          url,
+          headers: _getHeaders(),
+          body: jsonEncode({
+            'chat_app_key': config.appKey,
+            'browser_key': browserKey,
+            'page': page,
+            'per_page': perPage,
+          }),
+        )
+        .timeout(Duration(milliseconds: config.connectionTimeout));
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       final paginatedMessages = PaginatedMessages.fromJson(data);
-      _log('Received ${paginatedMessages.messages.length} messages (page ${paginatedMessages.currentPage}/${paginatedMessages.lastPage})');
+      _log(
+          'Received ${paginatedMessages.messages.length} messages (page ${paginatedMessages.currentPage}/${paginatedMessages.lastPage})');
       return paginatedMessages;
     } else {
       final error = _parseError(response);
@@ -350,29 +362,36 @@ class ChatApiService {
         ),
       );
 
+      // Wrap with progress tracking if callback provided
+      final http.BaseRequest requestToSend;
+      if (onSendProgress != null) {
+        requestToSend = _ProgressMultipartRequest(
+          request,
+          onProgress: onSendProgress,
+        );
+      } else {
+        requestToSend = request;
+      }
+
       // Send request
       http.StreamedResponse streamedResponse;
 
       if (cancelToken != null) {
         final result = await Future.any([
-          request.send(),
-          cancelToken.whenCancelled.then((_) => throw UploadCancelledException()),
+          requestToSend.send(),
+          cancelToken.whenCancelled
+              .then((_) => throw UploadCancelledException()),
         ]);
-        streamedResponse = result as http.StreamedResponse;
+        streamedResponse = result;
       } else {
-        streamedResponse = await request.send()
+        streamedResponse = await requestToSend
+            .send()
             .timeout(Duration(milliseconds: config.connectionTimeout));
       }
 
       // Check if cancelled during upload
       if (cancelToken?.isCancelled == true) {
         throw UploadCancelledException();
-      }
-
-      // Report 100% progress on completion
-      if (onSendProgress != null) {
-        final fileSize = await imageFile.length();
-        onSendProgress(fileSize, fileSize);
       }
 
       final response = await http.Response.fromStream(streamedResponse);
@@ -441,6 +460,47 @@ class ChatApiService {
   /// Dispose the client
   void dispose() {
     _client.close();
+  }
+}
+
+/// A MultipartRequest that tracks upload progress
+class _ProgressMultipartRequest extends http.BaseRequest {
+  final http.MultipartRequest _request;
+  final SendProgressCallback onProgress;
+
+  _ProgressMultipartRequest(this._request, {required this.onProgress})
+      : super(_request.method, _request.url) {
+    headers.addAll(_request.headers);
+    persistentConnection = _request.persistentConnection;
+  }
+
+  @override
+  int get contentLength => _request.contentLength;
+
+  @override
+  set contentLength(int? value) => _request.contentLength = value!;
+
+  @override
+  http.ByteStream finalize() {
+    super.finalize();
+    final byteStream = _request.finalize();
+
+    // Copy content-type after finalize — MultipartRequest sets boundary here
+    headers['content-type'] = _request.headers['content-type']!;
+
+    final total = contentLength;
+    var sent = 0;
+
+    final stream = byteStream.transform(
+      StreamTransformer<List<int>, List<int>>.fromHandlers(
+        handleData: (data, sink) {
+          sent += data.length;
+          onProgress(sent, total);
+          sink.add(data);
+        },
+      ),
+    );
+    return http.ByteStream(stream);
   }
 }
 
