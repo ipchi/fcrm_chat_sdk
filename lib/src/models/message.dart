@@ -1,6 +1,12 @@
+import 'message_rating.dart';
+
 /// Message model for chat messages
 class ChatMessage {
   final int id;
+
+  /// Opaque public identifier; used to address the message when rating it.
+  final String? publicId;
+
   final int chatId;
   final String content;
   final MessageType type;
@@ -12,8 +18,15 @@ class ChatMessage {
   final DateTime? readAt;
   final Map<String, dynamic>? metadata;
 
+  /// Whether the current client may rate this message.
+  final bool isRatable;
+
+  /// This client's own rating, if it has left one.
+  final MessageRating? rating;
+
   ChatMessage({
     required this.id,
+    this.publicId,
     required this.chatId,
     required this.content,
     required this.type,
@@ -24,12 +37,15 @@ class ChatMessage {
     this.isRead = false,
     this.readAt,
     this.metadata,
+    this.isRatable = false,
+    this.rating,
   });
 
   /// Create from JSON
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
     return ChatMessage(
       id: json['id'] ?? 0,
+      publicId: json['public_id'],
       chatId: json['chat_id'] ?? 0,
       content: json['content'] ?? '',
       type: MessageType.fromString(json['type'] ?? 'user'),
@@ -46,6 +62,10 @@ class ChatMessage {
           ? DateTime.parse(json['read_at'])
           : null,
       metadata: json['metadata'] is Map<String, dynamic> ? json['metadata'] : null,
+      isRatable: json['is_ratable'] ?? false,
+      rating: json['rating'] is Map<String, dynamic>
+          ? MessageRating.fromJson(json['rating'])
+          : null,
     );
   }
 
@@ -53,6 +73,7 @@ class ChatMessage {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'public_id': publicId,
       'chat_id': chatId,
       'content': content,
       'type': type.value,
@@ -63,6 +84,8 @@ class ChatMessage {
       'is_read': isRead,
       'read_at': readAt?.toIso8601String(),
       'metadata': metadata,
+      'is_ratable': isRatable,
+      'rating': rating?.toJson(),
     };
   }
 
@@ -103,6 +126,7 @@ class ChatMessage {
   /// Copy with new values
   ChatMessage copyWith({
     int? id,
+    String? publicId,
     int? chatId,
     String? content,
     MessageType? type,
@@ -113,9 +137,12 @@ class ChatMessage {
     bool? isRead,
     DateTime? readAt,
     Map<String, dynamic>? metadata,
+    bool? isRatable,
+    MessageRating? rating,
   }) {
     return ChatMessage(
       id: id ?? this.id,
+      publicId: publicId ?? this.publicId,
       chatId: chatId ?? this.chatId,
       content: content ?? this.content,
       type: type ?? this.type,
@@ -126,6 +153,8 @@ class ChatMessage {
       isRead: isRead ?? this.isRead,
       readAt: readAt ?? this.readAt,
       metadata: metadata ?? this.metadata,
+      isRatable: isRatable ?? this.isRatable,
+      rating: rating ?? this.rating,
     );
   }
 }

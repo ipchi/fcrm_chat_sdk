@@ -8,6 +8,7 @@ import '../config/chat_config.dart';
 import '../models/chat_app_config.dart';
 import '../models/browser.dart';
 import '../models/paginated_messages.dart';
+import '../models/message_rating.dart';
 
 /// Callback for tracking upload progress
 /// [sent] - bytes sent so far
@@ -298,6 +299,106 @@ class ChatApiService {
       _log('Messages error: $error');
       throw ChatApiException(error, response.statusCode);
     }
+  }
+
+  /// Create or update this client's rating of a message.
+  ///
+  /// [publicMessageId] is [ChatMessage.publicId] — the opaque id, not the
+  /// numeric one. [comment] is always optional: omit it to leave any existing
+  /// comment untouched, pass a string to set it, or an empty string to clear
+  /// it while keeping the rating.
+  Future<MessageRating> rateMessage({
+    required String browserKey,
+    required String publicMessageId,
+    required int rating,
+    String? comment,
+    bool commentProvided = false,
+  }) async {
+    final url = Uri.parse(
+      '${config.apiUrl}/messages/${Uri.encodeComponent(publicMessageId)}/rating',
+    );
+
+    _log('Rating message $publicMessageId: $rating');
+
+    final Map<String, dynamic> body = {
+      'browser_key': browserKey,
+      'rating': rating,
+    };
+
+    if (commentProvided || comment != null) {
+      body['comment'] = comment;
+    }
+
+    final response = await _client.put(
+      url,
+      headers: _getHeaders(),
+      body: jsonEncode(body),
+    ).timeout(Duration(milliseconds: config.connectionTimeout));
+
+    if (response.statusCode == 200) {
+      return MessageRating.fromJson(jsonDecode(response.body));
+    } else {
+      final error = _parseError(response);
+      _log('Rating error: $error');
+      throw ChatApiException(error, response.statusCode);
+    }
+  }
+
+  /// Read back this client's rating of a message.
+  ///
+  /// Returns null when the client has not rated it, which is not an error.
+  Future<MessageRating?> getRating({
+    required String browserKey,
+    required String publicMessageId,
+  }) async {
+    final url = Uri.parse(
+      '${config.apiUrl}/messages/${Uri.encodeComponent(publicMessageId)}/rating'
+      '?browser_key=${Uri.encodeQueryComponent(browserKey)}',
+    );
+
+    _log('Getting rating for message $publicMessageId');
+
+    final response = await _client
+        .get(url, headers: _getHeaders())
+        .timeout(Duration(milliseconds: config.connectionTimeout));
+
+    if (response.statusCode == 200) {
+      return MessageRating.fromJson(jsonDecode(response.body));
+    }
+
+    if (response.statusCode == 404) {
+      return null;
+    }
+
+    final error = _parseError(response);
+    _log('Get rating error: $error');
+    throw ChatApiException(error, response.statusCode);
+  }
+
+  /// Remove this client's rating of a message.
+  Future<bool> removeRating({
+    required String browserKey,
+    required String publicMessageId,
+  }) async {
+    final url = Uri.parse(
+      '${config.apiUrl}/messages/${Uri.encodeComponent(publicMessageId)}/rating',
+    );
+
+    _log('Removing rating for message $publicMessageId');
+
+    final response = await _client.delete(
+      url,
+      headers: _getHeaders(),
+      body: jsonEncode({'browser_key': browserKey}),
+    ).timeout(Duration(milliseconds: config.connectionTimeout));
+
+    if (response.statusCode == 204 || response.statusCode == 200) {
+      return true;
+    }
+
+    final error = _parseError(response);
+    _log('Remove rating error: $error');
+    throw ChatApiException(error, response.statusCode);
   }
 
   /// Upload an image

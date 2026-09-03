@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-09-03
+
+### Added
+- **Message ratings** - Clients can rate an admin answer from 1 to 5 stars with an
+  optional comment.
+  - `FcrmChat.rateMessage()`, `getRating()` and `removeRating()`
+  - New `MessageRating` model
+  - `ChatMessage.publicId`, `ChatMessage.isRatable` and `ChatMessage.rating`
+
+  Ratings are addressed by the opaque `publicId`, not the numeric message id.
+  The comment is always optional at every star value.
+
 ## [1.4.3] - 2025-11-29
 
 ### Fixed

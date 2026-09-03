@@ -5,6 +5,7 @@ import 'config/chat_config.dart';
 import 'models/chat_app_config.dart';
 import 'models/browser.dart';
 import 'models/message.dart';
+import 'models/message_rating.dart';
 import 'models/paginated_messages.dart';
 import 'services/chat_api_service.dart' show ChatApiService, SendProgressCallback, CancelToken, UploadCancelledException;
 import 'services/chat_socket_service.dart';
@@ -299,6 +300,52 @@ class FcrmChat {
   ///   print('Cannot edit: $e');
   /// }
   /// ```
+  /// Rate an admin answer from 1 to 5 stars.
+  ///
+  /// [publicMessageId] is [ChatMessage.publicId] — the opaque id, not the
+  /// numeric one. The comment is always optional: omit it to leave any
+  /// existing comment untouched, or pass an empty string to clear it while
+  /// keeping the rating.
+  Future<MessageRating> rateMessage({
+    required String publicMessageId,
+    required int rating,
+    String? comment,
+    bool commentProvided = false,
+  }) async {
+    _ensureInitialized();
+    _ensureBrowserKey();
+
+    return await _apiService.rateMessage(
+      browserKey: _browserKey!,
+      publicMessageId: publicMessageId,
+      rating: rating,
+      comment: comment,
+      commentProvided: commentProvided,
+    );
+  }
+
+  /// Read back this client's rating of a message, or null if it has none.
+  Future<MessageRating?> getRating({required String publicMessageId}) async {
+    _ensureInitialized();
+    _ensureBrowserKey();
+
+    return await _apiService.getRating(
+      browserKey: _browserKey!,
+      publicMessageId: publicMessageId,
+    );
+  }
+
+  /// Remove this client's rating of a message.
+  Future<bool> removeRating({required String publicMessageId}) async {
+    _ensureInitialized();
+    _ensureBrowserKey();
+
+    return await _apiService.removeRating(
+      browserKey: _browserKey!,
+      publicMessageId: publicMessageId,
+    );
+  }
+
   Future<EditMessageResponse> editMessage({
     required int messageId,
     required String content,
