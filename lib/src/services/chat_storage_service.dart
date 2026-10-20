@@ -13,6 +13,24 @@ class ChatStorageService {
   String get _browserStorageKey => '$_browserKeyPrefix$appKey';
   String get _userDataStorageKey => '$_userDataPrefix$appKey';
 
+  String get _resumeStorageKey => 'fcrm_chat_v2_resume_$appKey';
+
+  /// Store the rotating v2 resume credential separately from legacy browser keys.
+  Future<void> saveResumeToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_resumeStorageKey, token);
+  }
+
+  Future<String?> getResumeToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_resumeStorageKey);
+  }
+
+  Future<void> clearResumeToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_resumeStorageKey);
+  }
+
   /// Save browser key
   Future<void> saveBrowserKey(String browserKey) async {
     final prefs = await SharedPreferences.getInstance();
@@ -63,5 +81,6 @@ class ChatStorageService {
   Future<void> clearAll() async {
     await clearBrowserKey();
     await clearUserData();
+    await clearResumeToken();
   }
 }

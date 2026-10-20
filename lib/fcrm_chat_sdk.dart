@@ -9,6 +9,7 @@ export 'src/config/chat_config.dart';
 
 // Models
 export 'src/models/message.dart';
+export 'src/models/chat_event.dart';
 export 'src/models/message_rating.dart';
 export 'src/models/chat_app_config.dart';
 export 'src/models/browser.dart';
@@ -16,6 +17,7 @@ export 'src/models/paginated_messages.dart';
 
 // Services
 export 'src/services/chat_api_service.dart';
+export 'src/services/chat_v2_api_service.dart';
 export 'src/services/chat_socket_service.dart';
 export 'src/services/chat_storage_service.dart';
 

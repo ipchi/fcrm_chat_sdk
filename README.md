@@ -5,14 +5,16 @@ A Flutter SDK for integrating FCRM Chat Apps into your mobile applications. This
 ## Features
 
 - Real-time messaging via Socket.IO
-- Secure authentication using HMAC-SHA256 signatures
+- Automatic legacy/v2 protocol negotiation
+- Signed configuration requests and token-authenticated v2 sessions
 - User registration with custom fields
-- Image upload support with progress tracking
+- Image uploads and v2 audio messages with progress and cancellation
 - **Cancellable uploads** - Cancel image/file uploads in progress
-- **Message editing** - Edit messages within 24 hours
-- **Partial user data updates** - Update name, phone, email individually
-- **Message metadata** - Attach custom metadata to messages
-- Typing indicators
+- **Message editing** - Edit legacy messages within 24 hours
+- **Partial user data updates** - Update legacy name, phone, email individually
+- **Message metadata** - Attach custom metadata to legacy messages
+- Legacy typing indicators
+- V2 session resume, token renewal and missed-event recovery
 - **Paginated message history** with infinite scrolling support
 - Local storage for browser key and user data
 - Connection state management
@@ -552,7 +554,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             ),
                           ),
                         if (message.isImage)
-                          Image.network(message.content, width: 200)
+                          Image.network(message.imageUrl ?? message.content, width: 200)
                         else
                           Text(
                             message.content,
@@ -758,6 +760,7 @@ await chat.reset(); // Clears all stored data and disconnects
 | `socketUrl` | String? | Custom socket URL (optional) |
 | `connectionTimeout` | int | Connection timeout in ms (default: 20000) |
 | `enableLogging` | bool | Enable debug logging (default: false) |
+| `enableV2` | bool | Negotiate v2 when advertised (default: true) |
 
 ### FcrmChat Methods
 
@@ -775,6 +778,10 @@ await chat.reset(); // Clears all stored data and disconnects
 | `sendMessage(message, {endpoint, metadata})` | Send text message with optional metadata |
 | `editMessage({messageId, content})` | ✨ **Edit a message** (within 24 hours) |
 | `sendImage(file, {endpoint, onSendProgress, cancelToken})` | Upload and send image with progress and cancellation |
+| `sendAudio(file, {durationMs, endpoint, clientMessageId, onSendProgress, cancelToken})` | Send a recorded v2 voice message |
+| `getHistory({before, limit})` | Get v2 history using a sequence cursor |
+| `markRead({upToSeq})` | Mark v2 operator/AI messages read |
+| `syncEvents()` | Recover missed v2 events |
 | `sendFile(file, {endpoint, onSendProgress, cancelToken})` | ✨ Upload and send file with progress and cancellation |
 | `getMessages({page, perPage})` | Get paginated message history (requires registration) |
 | `sendTyping(isTyping)` | Send typing indicator |
@@ -795,6 +802,8 @@ await chat.reset(); // Clears all stored data and disconnects
 | `onConnectionChange` | `Stream<bool>` | Connection status |
 | `onTyping` | `Stream<bool>` | Typing indicator |
 | `onReady` | `Stream<bool>` | SDK ready state |
+| `onEvent` | `Stream<ChatEvent>` | V2 message creation/update events |
+| `onError` | `Stream<Object>` | Background renewal/recovery errors |
 
 ### PaginatedMessages Properties
 
@@ -820,6 +829,12 @@ await chat.reset(); // Clears all stored data and disconnects
 | `createdAt` | DateTime | Timestamp |
 | `metadata` | Map? | Additional metadata |
 | `isImage` | bool | Whether message is an image |
+| `isAudio` | bool | Whether message is an audio attachment |
+| `audioUrl` | String? | Audio attachment URL |
+| `durationMs` | int? | Audio duration in milliseconds |
+| `kind` | MessageKind? | Server attachment type for v2 |
+| `seq` | int? | V2 history/read sequence |
+| `clientMessageId` | String? | V2 send identity, retained for retries |
 | `isEdited` | bool | ✨ Whether message has been edited |
 | `editedAt` | DateTime? | ✨ Timestamp when message was edited |
 | `originalContent` | String? | ✨ Original content before editing |
@@ -883,204 +898,96 @@ try {
 4. Copy the **Key** and **Secret** values
 5. Use these in your `ChatConfig`
 
-## Socket Configuration
+## V2 audio and sessions
 
-The SDK uses Socket.IO for real-time communication. Socket configuration is automatically fetched from your FCRM server during initialization, but developers can customize socket behavior.
+Version 1.7.0 sends `X-Chat-Sdk-Protocol: 2` to the signed mobile configuration endpoint. If the app advertises `v2`, the SDK uses that service; other apps continue through the legacy API. Set `ChatConfig(enableV2: false, ...)` to opt out. `chat.isV2` reports the selected protocol.
 
-### How Socket Configuration Works
-
-When you call `chat.initialize()`, the SDK:
-1. Fetches socket configuration from `{baseUrl}/api/chat_app/get_config`
-2. Receives socket URL and other settings from the server
-3. Connects to the socket server with authentication
-4. Joins the private chat room using the browser key
-
-### Socket Connection Details
-
-The SDK establishes a Socket.IO connection with the following configuration:
+After initialization, check registration before creating a new session:
 
 ```dart
-// Socket connection is created with these parameters:
-// - auth: { key: appKey, browser_key: browserKey }
-// - transports: ['websocket', 'polling']
-// - reconnection: true
-// - reconnectionAttempts: 5
-// - reconnectionDelay: 1000ms
-// - timeout: 20000ms (configurable via ChatConfig)
-```
+await chat.initialize();
+if (!await chat.isRegistered()) {
+  await chat.register(userData: {'name': 'John', 'phone': '+998901234567'});
+}
 
-### Authentication
-
-The socket connection uses authentication to identify the client:
-
-| Auth Parameter | Description |
-|----------------|-------------|
-| `key` | Your Chat App key (from ChatConfig.appKey) |
-| `browser_key` | Unique browser/device identifier (auto-generated on registration) |
-
-The `browser_key` is automatically included in socket auth after user registration and is used to:
-- Join the correct private chat room (`private-chat_{browser_key}`)
-- Receive messages specific to this user/device
-- Maintain session across reconnections
-
-### Custom Socket URL (Optional)
-
-If you need to use a custom socket URL instead of the server-provided one:
-
-```dart
-final chat = FcrmChat(
-  config: ChatConfig(
-    baseUrl: 'https://api.yourcompany.com',
-    companyToken: 'your-company-token',
-    appKey: 'your-app-key',
-    appSecret: 'your-app-secret',
-    socketUrl: 'https://custom-socket.yourcompany.com', // Custom socket URL
-    connectionTimeout: 30000, // Optional: increase timeout to 30s
-  ),
-);
-```
-
-### Socket Configuration Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `socketUrl` | String? | null | Custom socket server URL (overrides server config) |
-| `connectionTimeout` | int | 20000 | Socket connection timeout in milliseconds |
-| `transports` | List | ['websocket', 'polling'] | Transport methods (auto-configured) |
-| `reconnection` | bool | true | Enable automatic reconnection (auto-configured) |
-| `reconnectionAttempts` | int | 5 | Max reconnection attempts (auto-configured) |
-| `reconnectionDelay` | int | 1000 | Delay between reconnection attempts in ms (auto-configured) |
-
-### Server-Side Socket Configuration
-
-Developers deploying the FCRM server should configure the socket server endpoint in their backend settings. The SDK will automatically retrieve this configuration via the `/api/chat_app/get_config` endpoint.
-
-Example server response:
-```json
-{
-  "socket_url": "https://socket.yourcompany.com",
-  "chat_app": {
-    "key": "app_key",
-    "name": "Your Chat App"
-  }
+if (chat.isV2) {
+  // Record the file in your app first. The SDK sends the existing recording.
+  final clientId = FcrmChat.newClientMessageId();
+  final result = await chat.sendAudio(
+    File('/path/to/voice.m4a'),
+    durationMs: 3200,
+    clientMessageId: clientId,
+    onSendProgress: (sent, total) => print('$sent / $total'),
+    cancelToken: CancelToken(),
+  );
+  final audioMessage = ChatMessage.fromJson(
+    Map<String, dynamic>.from(result['message']),
+  );
+  print(audioMessage.audioUrl);
 }
 ```
 
-### Socket Events Reference
+Import `dart:io` for `File`. Audio uploads accept a duration from 0 to 600000 milliseconds and files up to 10 MiB; images are limited to 5 MiB. Use a recording format supported by your backend, such as AAC in M4A/MP4, Ogg or WebM. The backend validates the file contents as well as its MIME type. WAV files detected as `audio/x-wav` may require a backend MIME allowlist update. `sendFile()` routes supported audio/images to the v2 attachment API; generic documents are not exposed there.
 
-The SDK automatically handles these socket events:
+`sendAudio()` and `sendImage()` return the server's `{message, duplicate}` map in v2. Text sends return `SendMessageResponse`, with the projected message in `.message`. Both text and attachment methods accept `clientMessageId`; retain the same id when retrying the same send after a network error. Cancellation aborts the HTTP request, but a message already accepted by the server may still exist.
 
-#### Incoming Events (Server → Client)
+V2 access tokens stay in memory and refresh automatically. The rotating resume credential is saved separately from the legacy browser key and scoped to the backend, tenant and app. `initialize()` resumes it after an app restart. A temporary network error preserves the credential for a later retry; an invalid or blocked session clears it. `reset()` clears both protocols' stored sessions. V2 exposes `visitorId`; `browserKey` and `chatId` remain null because that API does not return them. Legacy history is not migrated into a v2 session.
 
-| Event | Data | Description |
-|-------|------|-------------|
-| `connect` | - | Socket connection established successfully |
-| `disconnect` | `reason` | Socket disconnected (auto-reconnects) |
-| `connect_error` | `error` | Connection failed (triggers retry) |
-| `reconnect` | `attemptNumber` | Successfully reconnected after disconnect |
-| `reconnect_attempt` | `attemptNumber` | Attempting to reconnect |
-| `App:Events:Chat:MessageEvent` | `{ message }` | New message from Laravel broadcast |
-| `typing` | `{ isTyping }` | Agent typing indicator |
-| `auth-error` | `{ message }` | Authentication failed |
-
-#### Outgoing Events (Client → Server)
-
-| Event | Data | Description |
-|-------|------|-------------|
-| `join` | `private-chat_{browser_key}` | Join private chat room |
-| `typing` | `{ browser_key, isTyping }` | Send typing indicator |
-
-### Connection Management
+For v2 pagination, use the sequence cursor:
 
 ```dart
-// Listen for connection status
-chat.onConnectionChange.listen((connected) {
-  if (connected) {
-    print('Socket connected');
-  } else {
-    print('Socket disconnected');
-  }
+final latest = await chat.getHistory(limit: 30);
+if (latest.hasMore) {
+  final older = await chat.getHistory(before: latest.beforeSeq, limit: 30);
+  print(older.messages.length);
+}
+if (latest.messages.isNotEmpty) {
+  await chat.markRead(upToSeq: latest.messages.last.seq!);
+}
+```
+
+`getMessages(page:, perPage:)` and `loadMessages()` also adapt v2 cursor pages for existing callers; v2 `perPage` must be 1–50. Their `hasExactTotal` is false, `total` and `lastPage` are estimates from the pages fetched, and `nextBeforeSeq` supplies the next cursor. Prefer `hasMore` for pagination controls.
+
+V2 attachments have `kind`, `imageUrl`, `audioUrl` and `durationMs`; `content` is empty for attachments. Render using `isImage`/`isAudio` and the corresponding URL. V2 text remains text even if it contains an image URL. `publicId` holds the opaque server id, while `id` maps to the numeric `seq` for compatibility. `allowLinks` carries the server's link-rendering policy.
+
+The current v2 public API supports sessions, text, image/audio attachments, history, event recovery and read acknowledgements. Profile updates, message editing, ratings and push device registration remain legacy-only methods and throw `ChatException` on v2. Custom message metadata is also legacy-only. V2 has no typing socket event, so `sendTyping()` has no effect there.
+
+## Socket Configuration
+
+`initialize()` fetches `{baseUrl}/api/v1/mobile-chat/{companyToken}/config?key=...&sig=...`. Legacy sockets can connect immediately; v2 sockets connect after a session is created or resumed. `onReady` indicates configuration/session readiness, and `onConnectionChange` reports the actual socket connection.
+
+| Protocol | Namespace | Transport path | Handshake authentication |
+| --- | --- | --- | --- |
+| Legacy | `/` | `/socket.io` | `{key: socket_api_key, browser_key}` |
+| V2 | Advertised `socket_namespace`, normally `/v2` | Advertised `socket_path`, normally `/v2/socket.io` | `{token: access_token}` |
+
+`ChatConfig.socketUrl` optionally overrides the socket origin. `connectionTimeout` applies to HTTP requests and the socket handshake. Each SDK instance uses an isolated Socket.IO manager, reconnects automatically and supplies its latest credential on every handshake.
+
+Legacy clients join `private-chat_{browser_key}` and replay subscriptions after reconnecting. They receive colon and backslash versions of Chat/Telegram `MessageEvent` and `MessageEditedEvent`, along with `typing` and browser-key updates. V2 rooms are derived by the server from the verified token. The SDK sends no v2 room names or typing events.
+
+V2 receives `message.created` and `message.updated`. After every connection, it drains `/v1/widget/events?after=...` until caught up, deduplicates live/replayed events and suppresses older snapshots of an already updated message. Token rotation reconnects the socket so the server resets its expiry timer. `syncEvents()` can also be called explicitly. Background renewal and recovery failures are available through `onError`.
+
+```dart
+chat.onMessage.listen((message) {
+  // Insert or replace by publicId, or by clientMessageId for local pending sends.
+  // Updates are emitted here too; appending every event creates duplicates.
 });
+chat.onEvent.listen((event) {
+  print('${event.event} at cursor ${event.cursor}');
+});
+chat.onError.listen((error) => print('Chat background error: $error'));
+chat.onConnectionChange.listen((connected) => print('Connected: $connected'));
 
-// Manual reconnection
-await chat.reconnect();
-
-// Disconnect
 chat.disconnect();
+chat.reconnect();
 ```
 
-### Socket Connection Lifecycle
-
-1. **Initialize**: `chat.initialize()` fetches config from server
-2. **Connect**: Socket establishes connection with auth (`key` + `browser_key`)
-3. **Join Room**: Automatically joins `private-chat.{browser_key}` room
-4. **Active**: Real-time message exchange via Laravel broadcast events
-5. **Disconnect**: Auto-reconnect (up to 5 attempts with 1s delay)
-6. **Reconnect**: On successful reconnect, automatically rejoins chat room
-7. **Disposed**: `chat.dispose()` permanently closes connection
-
-**Important Notes:**
-- The `browser_key` is updated in socket auth during reconnection attempts
-- Chat room is automatically rejoined after successful reconnection
-- All messages are received via `App\\Events\\Chat\\MessageEvent` broadcast
-- Private chat room ensures messages are only delivered to the correct user/device
-
-### Chat Room Mechanics
-
-The SDK uses private chat rooms to ensure secure, isolated communication:
-
-```dart
-// After registration or browser update, the SDK automatically:
-// 1. Receives a unique browser_key from the server
-// 2. Includes browser_key in socket authentication
-// 3. Joins the private room: 'private-chat_{browser_key}'
-// 4. Receives messages via Laravel broadcast to this specific room
-```
-
-**Room Lifecycle:**
-- **On Connect**: Joins `private-chat_{browser_key}` if browser_key exists
-- **On Reconnect**: Automatically rejoins the same room
-- **On Registration**: Receives browser_key, then joins room
-- **On Update**: Updates browser data, rejoins room if needed
-
-**Message Flow:**
-1. User sends message via REST API (`/api/chat_app/browser/send-message`)
-2. Server processes message and stores in database
-3. Server broadcasts `App:Events:Chat:MessageEvent` to the private room
-4. SDK receives broadcast event via Socket.IO
-5. SDK emits message via `onMessage` stream
-6. Your app displays the message in UI
-
-### Debugging Socket Connection
-
-Enable logging to debug socket issues:
-
-```dart
-final chat = FcrmChat(
-  config: ChatConfig(
-    baseUrl: 'https://api.yourcompany.com',
-    companyToken: 'your-company-token',
-    appKey: 'your-app-key',
-    appSecret: 'your-app-secret',
-    enableLogging: true, // Enable debug logs
-  ),
-);
-```
-
-This will output socket connection events, errors, and message flow to the console.
-
-**Debug Checklist:**
-- ✅ Verify socket URL is returned from `/api/chat_app/get_config`
-- ✅ Confirm `browser_key` is stored in local storage after registration
-- ✅ Check socket auth includes both `key` and `browser_key`
-- ✅ Ensure private room name matches: `private-chat_{browser_key}`
-- ✅ Verify Laravel broadcast is configured and running
-- ✅ Check that messages are broadcast to the correct room (event: `App:Events:Chat:MessageEvent`)
+Enable `ChatConfig.enableLogging` for connection diagnostics. V2 recovery cursors are tracked in memory; use history to populate the conversation after restarting your app. `dispose()` releases socket listeners, HTTP resources, streams and renewal timers.
 
 ## Requirements
 
-- Flutter 3.0+
-- Dart 3.0+
+- Flutter 3.22+
+- Dart 3.4+
 - iOS 12.0+ / Android API 21+
 
 ## Dependencies

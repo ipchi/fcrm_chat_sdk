@@ -1,15 +1,21 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
+
+import 'package:http/http.dart' as http;
+import 'package:mime/mime.dart';
 
 import 'config/chat_config.dart';
 import 'models/chat_app_config.dart';
+import 'models/chat_event.dart';
 import 'models/browser.dart';
 import 'models/message.dart';
 import 'models/message_rating.dart';
 import 'models/paginated_messages.dart';
-import 'services/chat_api_service.dart' show ChatApiService, SendProgressCallback, CancelToken, UploadCancelledException;
+import 'services/chat_api_service.dart';
 import 'services/chat_socket_service.dart';
 import 'services/chat_storage_service.dart';
+import 'services/chat_v2_api_service.dart';
 
 /// Main FCRM Chat SDK class
 ///
@@ -20,6 +26,7 @@ import 'services/chat_storage_service.dart';
 /// final chat = FcrmChat(
 ///   config: ChatConfig(
 ///     baseUrl: 'https://api.yourcompany.com',
+///     companyToken: 'your-company-token',
 ///     appKey: 'your-app-key',
 ///     appSecret: 'your-app-secret',
 ///   ),
@@ -35,6 +42,24 @@ class FcrmChat {
   late final ChatApiService _apiService;
   late final ChatSocketService _socketService;
   late final ChatStorageService _storageService;
+  late final ChatStorageService _v2Storage;
+  final http.Client? _httpClient;
+  ChatV2ApiService? _v2Api;
+  String? _accessToken;
+  DateTime? _expiresAt;
+  int? _visitorId;
+  Timer? _refreshTimer;
+  Future<void>? _refreshing;
+  Future<void>? _syncing;
+  Future<void>? _initializing;
+  int _sessionGeneration = 0;
+  int _eventCursor = 0;
+  final _seenEvents = <String, int>{};
+  final _messageCursors = <String, int>{};
+  final _historyCursors = <int, Map<int, int?>>{};
+  bool _disposed = false;
+  bool _manuallyDisconnected = false;
+  final _subscriptions = <StreamSubscription<dynamic>>[];
 
   ChatAppRemoteConfig? _remoteConfig;
   String? _browserKey;
@@ -46,6 +71,8 @@ class FcrmChat {
   final _connectionController = StreamController<bool>.broadcast();
   final _typingController = StreamController<bool>.broadcast();
   final _readyController = StreamController<bool>.broadcast();
+  final _eventController = StreamController<ChatEvent>.broadcast();
+  final _errorController = StreamController<Object>.broadcast();
 
   /// Stream of incoming messages
   Stream<ChatMessage> get onMessage => _messageController.stream;
@@ -58,6 +85,21 @@ class FcrmChat {
 
   /// Stream emitted when chat is ready
   Stream<bool> get onReady => _readyController.stream;
+
+  /// Durable v2 message creation/update events, including reconnect recovery.
+  Stream<ChatEvent> get onEvent => _eventController.stream;
+
+  /// Background session refresh and event recovery errors.
+  Stream<Object> get onError => _errorController.stream;
+
+  /// Whether the server negotiated the v2 protocol.
+  bool get isV2 => _v2Api != null;
+
+  /// v2 visitor identifier. This is not a legacy browser credential.
+  int? get visitorId => _visitorId;
+
+  /// Last fully recovered durable event cursor (live events can arrive ahead).
+  int get eventCursor => _eventCursor;
 
   /// Current remote configuration
   ChatAppRemoteConfig? get remoteConfig => _remoteConfig;
@@ -77,55 +119,96 @@ class FcrmChat {
   /// Whether chat app is active
   bool get isActive => _remoteConfig?.isActive ?? false;
 
-  FcrmChat({required this.config}) {
-    _apiService = ChatApiService(config: config);
-    _socketService = ChatSocketService(enableLogging: config.enableLogging);
+  FcrmChat({
+    required this.config,
+    http.Client? httpClient,
+    ChatSocketService? socketService,
+  }) : _httpClient = httpClient {
+    _apiService = ChatApiService(config: config, client: httpClient);
+    _socketService =
+        socketService ?? ChatSocketService(enableLogging: config.enableLogging);
     _storageService = ChatStorageService(appKey: config.appKey);
+    _v2Storage = ChatStorageService(
+      appKey: 'v2_${Uri.encodeComponent(config.apiUrl)}_${config.appKey}',
+    );
 
     // Forward socket events
-    _socketService.onMessage.listen((socketMessage) {
-      _messageController.add(socketMessage.message);
-    });
-    _socketService.onConnectionChange.listen((connected) {
+    _subscriptions.add(_socketService.onMessage.listen((socketMessage) {
+      if (!_disposed && !isV2 && _browserKey != null) {
+        _messageController.add(socketMessage.message);
+      }
+    }));
+    _subscriptions.add(_socketService.onEvent.listen((event) {
+      if (!_disposed && isV2 && _accessToken != null) _deliverEvent(event);
+    }));
+    _subscriptions.add(_socketService.onConnectionChange.listen((connected) {
+      if (_disposed) return;
       _connectionController.add(connected);
-    });
-    _socketService.onTyping.listen((typing) {
-      _typingController.add(typing);
-    });
-    _socketService.onBrowserKeyUpdate.listen((key) async {
+      if (connected && _isInitialized && isV2 && _accessToken != null) {
+        unawaited(syncEvents().catchError(_reportError));
+      }
+    }));
+    _subscriptions.add(_socketService.onAuthError.listen((_) {
+      if (isV2) _renewSessionInBackground();
+    }));
+    _subscriptions.add(_socketService.onTyping.listen((typing) {
+      if (!_disposed) _typingController.add(typing);
+    }));
+    _subscriptions.add(_socketService.onBrowserKeyUpdate.listen((key) async {
+      if (_disposed || isV2 || _browserKey == null) return;
       _browserKey = key;
       await _storageService.saveBrowserKey(key);
-    });
+    }));
   }
 
   /// Initialize the chat SDK
   ///
   /// Fetches remote configuration and establishes socket connection.
-  Future<void> initialize() async {
-    if (_isInitialized) return;
+  Future<void> initialize() {
+    if (_disposed) throw ChatException('Chat has been disposed.');
+    if (_isInitialized) return Future.value();
+    return _initializing ??=
+        _initialize().whenComplete(() => _initializing = null);
+  }
 
+  Future<void> _initialize() async {
+    final generation = _sessionGeneration;
     try {
       // Get remote configuration
       _remoteConfig = await _apiService.getConfig();
+      _ensureSessionGeneration(generation);
 
       if (!_remoteConfig!.isActive) {
         throw ChatException('Chat app is not active');
       }
 
-      // Get stored browser key
-      _browserKey = await _storageService.getBrowserKey();
+      final v2 = config.enableV2 ? _remoteConfig!.v2 : null;
+      if (v2 != null) {
+        _v2Api?.dispose();
+        _v2Api = ChatV2ApiService(
+          config: config,
+          baseUrl: v2.baseUrl,
+          appKey: v2.appKey,
+          client: _httpClient,
+        );
+        await _resumeSession();
+      } else {
+        _v2Api?.dispose();
+        _v2Api = null;
+        _clearV2Memory();
+        _browserKey = await _storageService.getBrowserKey();
+        _ensureSessionGeneration(generation);
+        _connectSocket();
+      }
 
-      // Connect to socket
-      _socketService.connect(
-        socketUrl: config.socketUrl ?? _remoteConfig!.socketUrl,
-        apiKey: _remoteConfig!.socketApiKey,
-        browserKey: _browserKey,
-      );
-
+      _ensureSessionGeneration(generation);
       _isInitialized = true;
       _readyController.add(true);
+      if (isV2 && isConnected) {
+        unawaited(syncEvents().catchError(_reportError));
+      }
     } catch (e) {
-      _readyController.add(false);
+      if (!_disposed) _readyController.add(false);
       rethrow;
     }
   }
@@ -149,6 +232,23 @@ class FcrmChat {
       }
     }
 
+    if (isV2) {
+      final generation = ++_sessionGeneration;
+      _clearV2Memory();
+      _socketService.disconnect();
+      final session = await _v2Api!.startSession(
+        userData: userData,
+        endpoint: endpoint,
+      );
+      await _adoptSession(session, generation);
+      await _v2Storage.saveUserData({
+        ...userData,
+        'registered': true,
+        'registrationDate': DateTime.now().toIso8601String(),
+      });
+      return;
+    }
+
     // Register browser
     final response = await _apiService.registerBrowser(
       userData: userData,
@@ -160,9 +260,11 @@ class FcrmChat {
 
     // Save to storage
     await _storageService.saveBrowserKey(_browserKey!);
-    userData['registered'] = true;
-    userData['registrationDate'] = DateTime.now().toIso8601String();
-    await _storageService.saveUserData(userData);
+    await _storageService.saveUserData({
+      ...userData,
+      'registered': true,
+      'registrationDate': DateTime.now().toIso8601String(),
+    });
 
     // Update socket connection
     _socketService.updateBrowserKey(_browserKey!);
@@ -266,9 +368,25 @@ class FcrmChat {
     String message, {
     String? endpoint,
     Map<String, dynamic>? metadata,
+    String? clientMessageId,
   }) async {
     _ensureInitialized();
-    _ensureBrowserKey();
+    _ensureRegistration();
+
+    if (isV2) {
+      if (metadata != null && metadata.isNotEmpty) {
+        throw ChatException(
+            'The v2 API does not accept custom message metadata.');
+      }
+      final id = clientMessageId ?? newClientMessageId();
+      final data = await _withV2Token((token) => _v2Api!.sendMessage(
+            accessToken: token,
+            content: message,
+            clientMessageId: id,
+            endpoint: endpoint,
+          ));
+      return SendMessageResponse.fromJson(data);
+    }
 
     return await _apiService.sendMessage(
       browserKey: _browserKey!,
@@ -399,7 +517,8 @@ class FcrmChat {
     _ensureInitialized();
     _ensureBrowserKey();
 
-    await _apiService.unregisterPushDevice(browserKey: _browserKey!, token: token);
+    await _apiService.unregisterPushDevice(
+        browserKey: _browserKey!, token: token);
   }
 
   Future<EditMessageResponse> editMessage({
@@ -453,9 +572,21 @@ class FcrmChat {
     String? endpoint,
     SendProgressCallback? onSendProgress,
     CancelToken? cancelToken,
+    String? clientMessageId,
   }) async {
     _ensureInitialized();
-    _ensureBrowserKey();
+    _ensureRegistration();
+
+    if (isV2) {
+      return _uploadAttachment(
+        imageFile,
+        kind: 'image',
+        endpoint: endpoint,
+        clientMessageId: clientMessageId,
+        onSendProgress: onSendProgress,
+        cancelToken: cancelToken,
+      );
+    }
 
     return await _apiService.uploadImage(
       browserKey: _browserKey!,
@@ -495,9 +626,30 @@ class FcrmChat {
     String? endpoint,
     SendProgressCallback? onSendProgress,
     CancelToken? cancelToken,
+    String? clientMessageId,
   }) async {
     _ensureInitialized();
-    _ensureBrowserKey();
+    _ensureRegistration();
+
+    if (isV2) {
+      final mime = lookupMimeType(file.path) ?? '';
+      if (mime.startsWith('audio/') ||
+          file.path.toLowerCase().endsWith('.webm')) {
+        return sendAudio(file,
+            endpoint: endpoint,
+            clientMessageId: clientMessageId,
+            onSendProgress: onSendProgress,
+            cancelToken: cancelToken);
+      }
+      if (mime.startsWith('image/')) {
+        return sendImage(file,
+            endpoint: endpoint,
+            clientMessageId: clientMessageId,
+            onSendProgress: onSendProgress,
+            cancelToken: cancelToken);
+      }
+      throw ChatException('The v2 API supports image and audio attachments.');
+    }
 
     return await _apiService.uploadFile(
       browserKey: _browserKey!,
@@ -517,7 +669,9 @@ class FcrmChat {
     int perPage = 20,
   }) async {
     _ensureInitialized();
-    _ensureBrowserKey();
+    _ensureRegistration();
+
+    if (isV2) return _getV2Page(page: page, perPage: perPage);
 
     return await _apiService.getMessages(
       browserKey: _browserKey!,
@@ -544,11 +698,23 @@ class FcrmChat {
   }) async {
     _ensureInitialized();
 
-    // Check if browser key exists
-    if (_browserKey == null) {
-      // Try to load from storage
-      _browserKey = await _storageService.getBrowserKey();
+    if (isV2) {
+      if (_accessToken == null) {
+        return PaginatedMessages(
+          messages: [],
+          total: 0,
+          currentPage: 1,
+          perPage: perPage,
+          lastPage: 1,
+          hasMore: false,
+          hasExactTotal: false,
+        );
+      }
+      return getMessages(page: page, perPage: perPage);
     }
+
+    // Check if browser key exists
+    _browserKey ??= await _storageService.getBrowserKey();
 
     // If still no browser key, user is not registered
     if (_browserKey == null) {
@@ -600,55 +766,428 @@ class FcrmChat {
 
   /// Check if user is registered
   Future<bool> isRegistered() async {
+    if (isV2) return _accessToken != null;
     return await _storageService.isRegistered();
   }
 
   /// Get stored user data
   Future<Map<String, dynamic>?> getUserData() async {
-    return await _storageService.getUserData();
+    return await (isV2 ? _v2Storage : _storageService).getUserData();
   }
 
   /// Clear all stored data and reset
   Future<void> reset() async {
-    await _storageService.clearAll();
+    ++_sessionGeneration;
+    _clearV2Memory();
     _browserKey = null;
     _chatId = null;
     _socketService.disconnect();
+    await _storageService.clearAll();
+    await _v2Storage.clearAll();
   }
 
   /// Disconnect from chat
   void disconnect() {
+    _manuallyDisconnected = true;
+    _refreshTimer?.cancel();
     _socketService.disconnect();
   }
 
   /// Reconnect to chat
   void reconnect() {
-    if (_remoteConfig != null) {
-      _socketService.connect(
-        socketUrl: config.socketUrl ?? _remoteConfig!.socketUrl,
-        apiKey: _remoteConfig!.socketApiKey,
-        browserKey: _browserKey,
-      );
+    if (_disposed) return;
+    _manuallyDisconnected = false;
+    if (isV2 && _accessToken != null) {
+      unawaited(_withV2Token((_) async {
+        _scheduleRefresh();
+        _connectSocket();
+      }).catchError(_reportError));
+    } else {
+      _connectSocket();
     }
   }
 
   /// Dispose all resources
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    ++_sessionGeneration;
+    _clearV2Memory();
+    for (final subscription in _subscriptions) {
+      unawaited(subscription.cancel());
+    }
     _apiService.dispose();
+    _v2Api?.dispose();
     _socketService.dispose();
     _messageController.close();
     _connectionController.close();
     _typingController.close();
     _readyController.close();
+    _eventController.close();
+    _errorController.close();
+  }
+
+  /// Generate an id to retain across retries of the same v2 send.
+  static String newClientMessageId() {
+    final random = Random.secure();
+    return 'c_${List.generate(12, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
+  }
+
+  /// Send a recorded voice file through the v2 attachment API.
+  /// Recording and playback are managed by the host application.
+  Future<Map<String, dynamic>> sendAudio(
+    File audioFile, {
+    int? durationMs,
+    String? endpoint,
+    String? clientMessageId,
+    SendProgressCallback? onSendProgress,
+    CancelToken? cancelToken,
+  }) async {
+    _ensureInitialized();
+    _ensureV2();
+    _ensureRegistration();
+    return _uploadAttachment(
+      audioFile,
+      kind: 'audio',
+      durationMs: durationMs,
+      endpoint: endpoint,
+      clientMessageId: clientMessageId,
+      onSendProgress: onSendProgress,
+      cancelToken: cancelToken,
+    );
+  }
+
+  Future<Map<String, dynamic>> _uploadAttachment(
+    File file, {
+    required String kind,
+    int? durationMs,
+    String? endpoint,
+    String? clientMessageId,
+    SendProgressCallback? onSendProgress,
+    CancelToken? cancelToken,
+  }) {
+    final id = clientMessageId ?? newClientMessageId();
+    return _withV2Token((token) => _v2Api!.uploadAttachment(
+          accessToken: token,
+          file: file,
+          kind: kind,
+          durationMs: durationMs,
+          clientMessageId: id,
+          endpoint: endpoint,
+          onSendProgress: onSendProgress,
+          cancelToken: cancelToken,
+        ));
+  }
+
+  /// V2 history in chronological order. Pass the previous page's [ChatHistory.beforeSeq]
+  /// to retrieve older messages. The server provides no exact total count.
+  Future<ChatHistory> getHistory({int? before, int limit = 30}) async {
+    _ensureInitialized();
+    _ensureV2();
+    _ensureRegistration();
+    final data = await _withV2Token((token) => _v2Api!.getMessages(
+          accessToken: token,
+          before: before,
+          limit: limit,
+        ));
+    return ChatHistory.fromJson(data);
+  }
+
+  /// Mark operator/AI messages through this sequence as read (v2).
+  Future<int> markRead({required int upToSeq}) async {
+    _ensureInitialized();
+    _ensureV2();
+    _ensureRegistration();
+    return _withV2Token((token) => _v2Api!.markRead(
+          accessToken: token,
+          upToSeq: upToSeq,
+        ));
+  }
+
+  /// Recover durable events missed while offline. Also called after socket connection.
+  /// Events received live are deduplicated against the recovered events.
+  Future<void> syncEvents() {
+    _ensureInitialized();
+    _ensureV2();
+    _ensureRegistration();
+    final pending = _syncing;
+    if (pending != null) return pending;
+    final generation = _sessionGeneration;
+    late final Future<void> future;
+    future = (() async {
+      while (!_disposed && generation == _sessionGeneration) {
+        final page = ChatEventPage.fromJson(await _withV2Token(
+          (token) => _v2Api!.getEvents(accessToken: token, after: _eventCursor),
+        ));
+        if (_disposed || generation != _sessionGeneration) return;
+        for (final event in page.events) {
+          _deliverEvent(event);
+        }
+        if (page.nextCursor <= _eventCursor || page.events.isEmpty) return;
+        _eventCursor = page.nextCursor;
+        _seenEvents
+            .removeWhere((_, cursor) => cursor > 0 && cursor <= _eventCursor);
+        _messageCursors.removeWhere((_, cursor) => cursor <= _eventCursor);
+      }
+    })()
+        .whenComplete(() {
+      if (identical(_syncing, future)) _syncing = null;
+    });
+    _syncing = future;
+    return future;
+  }
+
+  void _deliverEvent(ChatEvent event) {
+    if (_disposed) return;
+    if (event.cursor > 0 && event.cursor <= _eventCursor) return;
+    final key = event.eventId ?? (event.cursor > 0 ? '${event.cursor}' : null);
+    if (key != null) {
+      if (_seenEvents.containsKey(key)) return;
+      _seenEvents[key] = event.cursor;
+    }
+    final message = event.message;
+    if (message != null && event.cursor > 0) {
+      final messageKey = message.publicId ?? '${message.id}';
+      final previous = _messageCursors[messageKey];
+      if (previous != null && previous >= event.cursor) return;
+      _messageCursors.remove(messageKey);
+      _messageCursors[messageKey] = event.cursor;
+    }
+    _eventController.add(event);
+    if (message != null) _messageController.add(message);
+  }
+
+  Future<PaginatedMessages> _getV2Page(
+      {required int page, required int perPage}) async {
+    if (page < 1 || perPage < 1 || perPage > 50) {
+      throw ArgumentError(
+          'V2 page must be positive and perPage between 1 and 50.');
+    }
+    if (page == 1) _historyCursors.remove(perPage);
+    final cursors = _historyCursors.putIfAbsent(perPage, () => {1: null});
+    var current = page;
+    while (!cursors.containsKey(current)) {
+      --current;
+    }
+    var history = const ChatHistory(messages: [], hasMore: false);
+    var total = 0;
+    var lastPage = page;
+    while (current <= page) {
+      history = await getHistory(before: cursors[current], limit: perPage);
+      total = (current - 1) * perPage + history.messages.length;
+      lastPage = current + (history.hasMore ? 1 : 0);
+      if (history.hasMore && history.beforeSeq != null) {
+        cursors[current + 1] = history.beforeSeq;
+      } else if (current < page) {
+        history = const ChatHistory(messages: [], hasMore: false);
+        break;
+      }
+      ++current;
+    }
+    return PaginatedMessages(
+      messages: history.messages,
+      total: total,
+      currentPage: page,
+      perPage: perPage,
+      lastPage: lastPage,
+      hasMore: history.hasMore,
+      hasExactTotal: false,
+      nextBeforeSeq: history.hasMore ? history.beforeSeq : null,
+    );
+  }
+
+  void _connectSocket() {
+    if (_disposed || _manuallyDisconnected || _remoteConfig == null) return;
+    final v2 = _remoteConfig!.v2;
+    if (isV2) {
+      if (_accessToken == null || v2 == null) return;
+      _socketService.connect(
+        socketUrl: config.socketUrl ?? v2.baseUrl,
+        token: _accessToken,
+        namespace: v2.socketNamespace,
+        path: v2.socketPath,
+        timeout: Duration(milliseconds: config.connectionTimeout),
+      );
+    } else {
+      _socketService.connect(
+        socketUrl: config.socketUrl ?? _remoteConfig!.socketUrl,
+        apiKey: _remoteConfig!.socketApiKey,
+        browserKey: _browserKey,
+        timeout: Duration(milliseconds: config.connectionTimeout),
+      );
+    }
+  }
+
+  Future<void> _adoptSession(
+      Map<String, dynamic> session, int generation) async {
+    _ensureSessionGeneration(generation);
+    final token = session['access_token'] as String?;
+    final lifetime = (session['expires_in'] as num?)?.toInt();
+    if (token == null || token.isEmpty || lifetime == null || lifetime <= 0) {
+      throw ChatException('Invalid v2 session response.');
+    }
+    final resume = session['resume_token'] as String?;
+    if (resume != null && resume.isNotEmpty) {
+      await _v2Storage.saveResumeToken(resume);
+      _ensureSessionGeneration(generation);
+    }
+    _accessToken = token;
+    _expiresAt = DateTime.now().add(Duration(seconds: lifetime));
+    if (session['visitor'] is Map) {
+      _visitorId = (session['visitor']['id'] as num?)?.toInt();
+    }
+    if (!_manuallyDisconnected) {
+      _scheduleRefresh();
+      _connectSocket();
+    }
+  }
+
+  Future<bool> _resumeSession() async {
+    final generation = _sessionGeneration;
+    final resume = await _v2Storage.getResumeToken();
+    _ensureSessionGeneration(generation);
+    if (resume == null) return false;
+    try {
+      final session = await _v2Api!.resumeSession(resumeToken: resume);
+      await _adoptSession(session, generation);
+      return true;
+    } on ChatApiException catch (error) {
+      if (error.statusCode != 403 && error.statusCode != 404) rethrow;
+      _ensureSessionGeneration(generation);
+      _clearV2Memory();
+      _socketService.disconnect();
+      await _v2Storage.clearAll();
+      return false;
+    }
+  }
+
+  Future<void> _refreshAccessToken() {
+    final pending = _refreshing;
+    if (pending != null) return pending;
+    final generation = _sessionGeneration;
+    late final Future<void> future;
+    future = (() async {
+      final token = _accessToken;
+      if (token == null) {
+        throw ChatException('Not registered. Call register() first.');
+      }
+      try {
+        final session = await _v2Api!.refreshSession(accessToken: token);
+        await _adoptSession(session, generation);
+      } on ChatApiException catch (error) {
+        _ensureSessionGeneration(generation);
+        if (error.statusCode != 401 && error.statusCode != 403) rethrow;
+        if (!await _resumeSession()) {
+          throw ChatException('Session ended. Call register() again.');
+        }
+      }
+    })()
+        .whenComplete(() {
+      if (identical(_refreshing, future)) _refreshing = null;
+    });
+    _refreshing = future;
+    return future;
+  }
+
+  Future<T> _withV2Token<T>(Future<T> Function(String token) run) async {
+    final generation = _sessionGeneration;
+    if (_expiresAt != null &&
+        DateTime.now()
+            .isAfter(_expiresAt!.subtract(const Duration(seconds: 5)))) {
+      await _refreshAccessToken();
+    }
+    _ensureSessionGeneration(generation);
+    final token = _accessToken;
+    if (token == null) {
+      throw ChatException('Not registered. Call register() first.');
+    }
+    try {
+      final result = await run(token);
+      _ensureSessionGeneration(generation);
+      return result;
+    } on ChatApiException catch (error) {
+      if (error.statusCode != 401) rethrow;
+      _ensureSessionGeneration(generation);
+      if (_accessToken == token) await _refreshAccessToken();
+      _ensureSessionGeneration(generation);
+      final result = await run(_accessToken!);
+      _ensureSessionGeneration(generation);
+      return result;
+    }
+  }
+
+  void _clearV2Memory() {
+    _refreshTimer?.cancel();
+    _accessToken = null;
+    _expiresAt = null;
+    _visitorId = null;
+    _eventCursor = 0;
+    _seenEvents.clear();
+    _messageCursors.clear();
+    _historyCursors.clear();
+    _refreshing = null;
+    _syncing = null;
+  }
+
+  void _ensureSessionGeneration(int generation) {
+    if (_disposed || generation != _sessionGeneration) {
+      throw ChatException('Chat session changed during the request.');
+    }
+  }
+
+  void _reportError(Object error) {
+    if (!_disposed) _errorController.add(error);
+  }
+
+  void _scheduleRefresh() {
+    _refreshTimer?.cancel();
+    if (_expiresAt == null || _manuallyDisconnected || _disposed) return;
+    final remaining = _expiresAt!.difference(DateTime.now()).inMilliseconds;
+    _refreshTimer = Timer(Duration(milliseconds: max(1, remaining * 7 ~/ 10)),
+        _renewSessionInBackground);
+  }
+
+  void _renewSessionInBackground() {
+    if (_disposed || _manuallyDisconnected || _accessToken == null) return;
+    final generation = _sessionGeneration;
+    unawaited(_refreshAccessToken().catchError((Object error) {
+      _reportError(error);
+      if (!_disposed &&
+          !_manuallyDisconnected &&
+          _accessToken != null &&
+          generation == _sessionGeneration) {
+        _refreshTimer?.cancel();
+        _refreshTimer =
+            Timer(const Duration(seconds: 5), _renewSessionInBackground);
+      }
+    }));
+  }
+
+  void _ensureV2() {
+    if (!isV2) throw ChatException('This operation requires a v2 chat app.');
+  }
+
+  void _ensureRegistration() {
+    if (isV2) {
+      if (_accessToken == null) {
+        throw ChatException('Not registered. Call register() first.');
+      }
+    } else {
+      _ensureBrowserKey();
+    }
   }
 
   void _ensureInitialized() {
+    if (_disposed) throw ChatException('Chat has been disposed.');
     if (!_isInitialized) {
       throw ChatException('Chat not initialized. Call initialize() first.');
     }
   }
 
   void _ensureBrowserKey() {
+    if (isV2) {
+      throw ChatException('This operation is not exposed by the v2 API.');
+    }
     if (_browserKey == null) {
       throw ChatException('Not registered. Call register() first.');
     }

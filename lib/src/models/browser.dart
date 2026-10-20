@@ -1,3 +1,5 @@
+import 'message.dart';
+
 /// Browser/Device registration model
 class Browser {
   final String browserKey;
@@ -65,6 +67,9 @@ class SendMessageResponse {
   final int chatId;
   final bool aiAgentEnabled;
   final Map<String, dynamic>? aiMessage;
+  final ChatMessage? message;
+  final bool duplicate;
+  final bool aiPending;
 
   SendMessageResponse({
     required this.success,
@@ -72,15 +77,27 @@ class SendMessageResponse {
     required this.chatId,
     required this.aiAgentEnabled,
     this.aiMessage,
+    this.message,
+    this.duplicate = false,
+    this.aiPending = false,
   });
 
   factory SendMessageResponse.fromJson(Map<String, dynamic> json) {
+    final message = json['message'] is Map
+        ? ChatMessage.fromJson(Map<String, dynamic>.from(json['message']))
+        : null;
+    final aiPending = json['aiPending'] == true || json['ai_pending'] == true;
     return SendMessageResponse(
-      success: json['success'] ?? false,
-      userMessageId: json['user_message_id'] ?? 0,
-      chatId: json['chat_id'] ?? 0,
-      aiAgentEnabled: json['ai_agent_enabled'] ?? false,
-      aiMessage: json['ai_message'],
+      success: json['success'] ?? message != null,
+      userMessageId: json['user_message_id'] ?? message?.id ?? 0,
+      chatId: json['chat_id'] ?? message?.chatId ?? 0,
+      aiAgentEnabled: json['ai_agent_enabled'] ?? aiPending,
+      aiMessage: json['ai_message'] is Map
+          ? Map<String, dynamic>.from(json['ai_message'])
+          : null,
+      message: message,
+      duplicate: json['duplicate'] == true,
+      aiPending: aiPending,
     );
   }
 }
@@ -126,7 +143,7 @@ class EditMessageResponse {
     final message = json['message'] as Map<String, dynamic>?;
     return EditMessageResponse(
       success: json['success'] ?? false,
-      messageId: message?['id'] ?? 0,
+      messageId: message?['id'] is int ? message!['id'] : message?['seq'] ?? 0,
       content: message?['content'] ?? '',
       edited: message?['edited'] ?? false,
       editedAt: message?['edited_at'],

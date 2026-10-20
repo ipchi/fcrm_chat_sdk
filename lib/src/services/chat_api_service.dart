@@ -57,6 +57,7 @@ class ChatApiService {
   /// Log message if logging is enabled
   void _log(String message) {
     if (config.enableLogging) {
+      // ignore: avoid_print
       print('[FCRM Chat] $message');
     }
   }
@@ -83,11 +84,14 @@ class ChatApiService {
       'sig': signature,
     });
 
-    _log('Getting config from: $url');
+    _log('Getting chat configuration');
 
     final response = await _client.get(
       url,
-      headers: {'Accept': 'application/json'},
+      headers: {
+        'Accept': 'application/json',
+        if (config.enableV2) 'X-Chat-Sdk-Protocol': '2',
+      },
     ).timeout(Duration(milliseconds: config.connectionTimeout));
 
     if (response.statusCode == 200) {
@@ -546,7 +550,7 @@ class ChatApiService {
           request.send(),
           cancelToken.whenCancelled.then((_) => throw UploadCancelledException()),
         ]);
-        streamedResponse = result as http.StreamedResponse;
+        streamedResponse = result;
       } else {
         streamedResponse = await request.send()
             .timeout(Duration(milliseconds: config.connectionTimeout));

@@ -9,6 +9,10 @@ class PaginatedMessages {
   final int lastPage;
   final bool hasMore;
 
+  /// False when adapting v2 cursor pages, which do not report a total count.
+  final bool hasExactTotal;
+  final int? nextBeforeSeq;
+
   PaginatedMessages({
     required this.messages,
     required this.total,
@@ -16,6 +20,8 @@ class PaginatedMessages {
     required this.perPage,
     required this.lastPage,
     required this.hasMore,
+    this.hasExactTotal = true,
+    this.nextBeforeSeq,
   });
 
   factory PaginatedMessages.fromJson(Map<String, dynamic> json) {
@@ -33,6 +39,8 @@ class PaginatedMessages {
       perPage: pagination['per_page'] ?? messages.length,
       lastPage: pagination['last_page'] ?? 1,
       hasMore: pagination['has_more'] ?? false,
+      hasExactTotal: pagination['has_exact_total'] ?? true,
+      nextBeforeSeq: pagination['next_before_seq'],
     );
   }
 
@@ -45,6 +53,8 @@ class PaginatedMessages {
         'per_page': perPage,
         'last_page': lastPage,
         'has_more': hasMore,
+        'has_exact_total': hasExactTotal,
+        'next_before_seq': nextBeforeSeq,
       },
     };
   }

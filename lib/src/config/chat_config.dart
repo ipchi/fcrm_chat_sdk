@@ -24,15 +24,19 @@ class ChatConfig {
   /// Enable debug logging
   final bool enableLogging;
 
+  /// Negotiate protocol v2 when the server advertises support for it.
+  final bool enableV2;
+
   ChatConfig({
-    required this.baseUrl,
+    required String baseUrl,
     required this.companyToken,
     required this.appKey,
     required this.appSecret,
     this.socketUrl,
     this.connectionTimeout = 20000,
     this.enableLogging = false,
-  });
+    this.enableV2 = true,
+  }) : baseUrl = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
 
   /// Generate HMAC-SHA256 signature for API authentication
   String generateSignature() {
@@ -55,6 +59,7 @@ class ChatConfig {
     String? socketUrl,
     int? connectionTimeout,
     bool? enableLogging,
+    bool? enableV2,
   }) {
     return ChatConfig(
       baseUrl: baseUrl ?? this.baseUrl,
@@ -64,6 +69,7 @@ class ChatConfig {
       socketUrl: socketUrl ?? this.socketUrl,
       connectionTimeout: connectionTimeout ?? this.connectionTimeout,
       enableLogging: enableLogging ?? this.enableLogging,
+      enableV2: enableV2 ?? this.enableV2,
     );
   }
 }

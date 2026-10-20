@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.0] - 2026-10-20
+
+### Added
+- Automatic v2 negotiation through `X-Chat-Sdk-Protocol: 2`, with `enableV2: false` opt-out and legacy fallback.
+- Token-authenticated visitor sessions, scoped rotating resume credentials, proactive token refresh and safe concurrent initialization/renewal.
+- `sendAudio()` with duration, MIME handling, streamed progress, cancellation and idempotent retry keys. V2 text/image sends also accept `clientMessageId`.
+- Typed audio/image messages, opaque public ids, sequence cursors and server link policy.
+- Cursor history through `getHistory()`, `markRead()`, `syncEvents()`, `onEvent` and background `onError`.
+
+### Fixed
+- V2 Socket.IO namespace/path and authentication; reconnect recovery drains durable events, deduplicates retransmissions and ignores stale message snapshots.
+- Legacy edited-message events, refreshed browser credentials and room resubscription after reconnect.
+- Socket manager isolation, listener cleanup and reset/disposal guards for pending requests.
+- Required registration fields supplied as either arrays or maps.
+
+### Changed
+- SDK version is 1.7.0; requires Dart 3.4+ / Flutter 3.22+ and `http` 1.5+ for request cancellation.
+- V2 pagination has no exact server total; adapted page responses expose `hasExactTotal: false` and `nextBeforeSeq`.
+- V2 operations not exposed by the server (profile updates, editing, ratings, push devices and custom metadata) fail explicitly. Legacy methods retain their existing endpoints.
+- Audio recording/playback remain the host application's responsibility. Existing conversations are not migrated between protocols.
+
 ## [1.6.0] - 2026-09-05
 
 ### Added
