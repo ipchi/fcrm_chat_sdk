@@ -346,6 +346,62 @@ class FcrmChat {
     );
   }
 
+  /// Register this device to receive push notifications.
+  ///
+  /// This SDK does not manage Firebase itself — obtain [token] from your own
+  /// app's FCM/APNs setup (e.g. `FirebaseMessaging.instance.getToken()`,
+  /// which requires `google-services.json`/`GoogleService-Info.plist` to
+  /// already be configured per Mobile/FIREBASE_SETUP.md in the backend repo)
+  /// and pass it here. [platform] is `'android'` or `'ios'`; [deviceType] is
+  /// `'fcm'` for both today (`'apns'` is reserved for a direct-APNs path).
+  ///
+  /// Safe to call every app start / on token refresh: re-registering the
+  /// same token updates the existing record instead of duplicating it.
+  Future<void> registerPushDevice({
+    required String token,
+    required String platform,
+    String deviceType = 'fcm',
+    String? deviceName,
+    String? deviceModel,
+    String? osVersion,
+    String? appVersion,
+    String? locale,
+  }) async {
+    _ensureInitialized();
+    _ensureBrowserKey();
+
+    await _apiService.registerPushDevice(
+      browserKey: _browserKey!,
+      token: token,
+      platform: platform,
+      deviceType: deviceType,
+      deviceName: deviceName,
+      deviceModel: deviceModel,
+      osVersion: osVersion,
+      appVersion: appVersion,
+      locale: locale,
+    );
+  }
+
+  /// Keep-alive for a registered push device. Call this periodically (e.g. on
+  /// app resume) if you want stale-device cleanup on the backend to have a
+  /// recent last_seen_at to work from; not required for delivery itself.
+  Future<void> sendPushHeartbeat(String token) async {
+    _ensureInitialized();
+    _ensureBrowserKey();
+
+    await _apiService.sendPushHeartbeat(browserKey: _browserKey!, token: token);
+  }
+
+  /// Stop push notifications to this device — call on logout or when the
+  /// user opts out.
+  Future<void> unregisterPushDevice(String token) async {
+    _ensureInitialized();
+    _ensureBrowserKey();
+
+    await _apiService.unregisterPushDevice(browserKey: _browserKey!, token: token);
+  }
+
   Future<EditMessageResponse> editMessage({
     required int messageId,
     required String content,

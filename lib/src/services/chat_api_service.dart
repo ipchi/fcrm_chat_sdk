@@ -401,6 +401,93 @@ class ChatApiService {
     throw ChatApiException(error, response.statusCode);
   }
 
+  /// Register or refresh this device's push token.
+  ///
+  /// Idempotent: calling it again with the same [token] updates the existing
+  /// registration (last_seen_at, device info) instead of duplicating it.
+  Future<void> registerPushDevice({
+    required String browserKey,
+    required String token,
+    required String platform,
+    required String deviceType,
+    String? deviceName,
+    String? deviceModel,
+    String? osVersion,
+    String? appVersion,
+    String? locale,
+  }) async {
+    final url = Uri.parse('${config.apiUrl}/devices/register');
+
+    _log('Registering push device ($platform/$deviceType)');
+
+    final response = await _client.post(
+      url,
+      headers: _getHeaders(),
+      body: jsonEncode({
+        'browser_key': browserKey,
+        'token': token,
+        'platform': platform,
+        'device_type': deviceType,
+        if (deviceName != null) 'device_name': deviceName,
+        if (deviceModel != null) 'device_model': deviceModel,
+        if (osVersion != null) 'os_version': osVersion,
+        if (appVersion != null) 'app_version': appVersion,
+        if (locale != null) 'locale': locale,
+      }),
+    ).timeout(Duration(milliseconds: config.connectionTimeout));
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final error = _parseError(response);
+      _log('Register push device error: $error');
+      throw ChatApiException(error, response.statusCode);
+    }
+  }
+
+  /// Keep-alive for a registered push device. Does not reactivate a token the
+  /// server has already deactivated (e.g. FCM reported it dead) — only a
+  /// fresh [registerPushDevice] call does that.
+  Future<void> sendPushHeartbeat({
+    required String browserKey,
+    required String token,
+  }) async {
+    final url = Uri.parse('${config.apiUrl}/devices/heartbeat');
+
+    final response = await _client.post(
+      url,
+      headers: _getHeaders(),
+      body: jsonEncode({'browser_key': browserKey, 'token': token}),
+    ).timeout(Duration(milliseconds: config.connectionTimeout));
+
+    if (response.statusCode != 200) {
+      final error = _parseError(response);
+      _log('Push heartbeat error: $error');
+      throw ChatApiException(error, response.statusCode);
+    }
+  }
+
+  /// Stop push notifications to this device (logout, opt-out). The server
+  /// deactivates rather than deletes the record.
+  Future<void> unregisterPushDevice({
+    required String browserKey,
+    required String token,
+  }) async {
+    final url = Uri.parse('${config.apiUrl}/devices/unregister');
+
+    _log('Unregistering push device');
+
+    final response = await _client.post(
+      url,
+      headers: _getHeaders(),
+      body: jsonEncode({'browser_key': browserKey, 'token': token}),
+    ).timeout(Duration(milliseconds: config.connectionTimeout));
+
+    if (response.statusCode != 200 && response.statusCode != 204) {
+      final error = _parseError(response);
+      _log('Unregister push device error: $error');
+      throw ChatApiException(error, response.statusCode);
+    }
+  }
+
   /// Upload an image
   ///
   /// [browserKey] - The browser key for authentication

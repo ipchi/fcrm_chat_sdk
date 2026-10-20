@@ -783,6 +783,9 @@ await chat.reset(); // Clears all stored data and disconnects
 | `disconnect()` | Disconnect socket |
 | `reconnect()` | Reconnect to socket |
 | `dispose()` | Dispose all resources |
+| `registerPushDevice({token, platform, ...})` | ✨ Register this device for push notifications — pass a token you already obtained from your own FCM setup |
+| `sendPushHeartbeat(token)` | ✨ Keep-alive for a registered push device |
+| `unregisterPushDevice(token)` | ✨ Stop push notifications to this device (e.g. on logout) |
 
 ### FcrmChat Streams
 

@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-09-05
+
+### Added
+- **Push notification device registration** — `FcrmChat.registerPushDevice()`,
+  `sendPushHeartbeat()` and `unregisterPushDevice()`.
+
+  The SDK does not depend on Firebase itself: obtain the token from your
+  app's own FCM setup (`firebase_messaging` or equivalent) and pass it to
+  `registerPushDevice()` along with `platform` (`'android'`/`'ios'`). This
+  keeps the SDK usable in apps that don't want push at all, and avoids
+  forcing a Firebase dependency on every consumer.
+
+  Re-registering the same token is idempotent (updates the existing device
+  row rather than duplicating it), so it's safe to call on every app start
+  and on token refresh.
+
 ## [1.5.0] - 2026-09-03
 
 ### Added
